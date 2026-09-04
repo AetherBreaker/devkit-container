@@ -34,7 +34,11 @@ pub fn prepare(app_root: &Path, entries: &[String], chown: &mut dyn FnMut(&Path)
 
 fn walk(path: &Path, chown: &mut dyn FnMut(&Path) -> Result<()>) -> Result<()> {
   chown(path)?;
-  if path.is_dir() {
+  // `symlink_metadata`, not `is_dir()`, which follows links: a symlink to a directory is a
+  // leaf here, so a link planted inside a mounted volume cannot redirect the walk (and the
+  // chowns with it) outside that volume.
+  let meta = std::fs::symlink_metadata(path).with_context(|| format!("reading {}", path.display()))?;
+  if meta.is_dir() {
     for entry in std::fs::read_dir(path).with_context(|| format!("listing {}", path.display()))? {
       walk(&entry?.path(), chown)?;
     }
@@ -73,6 +77,28 @@ mod tests {
     // `new` itself was created on the way to `new/deep` and must be chowned too, or nonroot
     // cannot traverse into its own directory.
     assert!(seen.contains(&root.join("new")), "{seen:?}");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn a_symlinked_directory_is_a_leaf() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("outside")).unwrap();
+    std::fs::write(root.join("outside/secret.txt"), "x").unwrap();
+    std::fs::create_dir_all(root.join("persisted_data")).unwrap();
+    std::os::unix::fs::symlink(root.join("outside"), root.join("persisted_data/link")).unwrap();
+    let mut seen: Vec<PathBuf> = Vec::new();
+    prepare(root, &["persisted_data".into()], &mut |p| {
+      seen.push(p.to_path_buf());
+      Ok(())
+    })
+    .unwrap();
+    assert!(seen.contains(&root.join("persisted_data/link")), "{seen:?}");
+    assert!(
+      !seen.contains(&root.join("persisted_data/link/secret.txt")),
+      "walked through a symlink: {seen:?}"
+    );
   }
 
   #[test]
