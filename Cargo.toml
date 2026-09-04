@@ -1,0 +1,21 @@
+[package]
+  name    = "aeth-devkit-container"
+  version.workspace = true
+  edition.workspace = true
+  publish.workspace = true
+
+[[bin]]
+  name = "devkit-container"
+  path = "src/main.rs"
+
+[dependencies]
+  anyhow    = { workspace = true }
+  clap      = { workspace = true }
+  toml_edit = { workspace = true }
+
+# `nix` has no Windows build at all, so it must not even be resolved there.
+[target.'cfg(unix)'.dependencies]
+  nix = { workspace = true }
+
+[dev-dependencies]
+  tempfile = { workspace = true }
