@@ -15,22 +15,24 @@ pub fn parse_mountinfo(text: &str) -> Vec<PathBuf> {
 }
 
 fn unescape(s: &str) -> String {
-  let mut out = String::with_capacity(s.len());
+  // Decoded as bytes, not chars: the kernel escapes only space, tab, newline and backslash,
+  // so a non-ASCII path arrives as raw UTF-8, and `byte as char` would turn each byte into
+  // a Latin-1 code point (`é` → `Ã©`). The bytes are reassembled into UTF-8 at the end.
+  let mut out: Vec<u8> = Vec::with_capacity(s.len());
   let bytes = s.as_bytes();
   let mut i = 0;
   while i < bytes.len() {
     // `\` followed by three octal digits is one byte; anything else is literal. The bound
     // guarantees indices `i+1..=i+3` exist before the slice is taken.
     if bytes[i] == b'\\' && i + 3 < bytes.len() && bytes[i + 1..i + 4].iter().all(|b| (b'0'..=b'7').contains(b)) {
-      let code = u8::from_str_radix(&s[i + 1..i + 4], 8).unwrap_or(b'?');
-      out.push(code as char);
+      out.push(u8::from_str_radix(&s[i + 1..i + 4], 8).unwrap_or(b'?'));
       i += 4;
     } else {
-      out.push(bytes[i] as char);
+      out.push(bytes[i]);
       i += 1;
     }
   }
-  out
+  String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Walk from `app_root/entry` upwards, stopping *before* `app_root`; `true` if any path on
@@ -68,6 +70,7 @@ mod tests {
 28 0 8:1 / / rw,relatime - ext4 /dev/sda1 rw
 99 28 8:2 /data/x_files /app/persisted_data rw,relatime - ext4 /dev/sda2 rw
 100 28 8:2 /d /app/with\\040space rw - ext4 /dev/sda2 rw
+101 28 8:2 /d /app/données rw - ext4 /dev/sda2 rw
 ";
 
   #[test]
@@ -75,6 +78,7 @@ mod tests {
     let m = parse_mountinfo(MOUNTINFO);
     assert!(m.contains(&PathBuf::from("/app/persisted_data")));
     assert!(m.contains(&PathBuf::from("/app/with space")));
+    assert!(m.contains(&PathBuf::from("/app/données")), "raw UTF-8 survives: {m:?}");
     assert!(m.contains(&PathBuf::from("/")));
   }
 
