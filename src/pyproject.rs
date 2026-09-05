@@ -138,8 +138,6 @@ mod tests {
       .unwrap_err()
       .to_string();
     assert!(legacy.contains("chown_paths"), "{legacy}");
-    // Still refused next to the new key: setup-project adds the new key without removing
-    // the old ones, and `x` above would otherwise be silently dropped.
     let both = doc("[tool.docker]\nrequired_persisted_dirs = [\"persisted_data\"]\nmkdirs = [\"x\"]\n");
     assert!(required_persisted_dirs(&both).unwrap_err().to_string().contains("mkdirs"));
   }

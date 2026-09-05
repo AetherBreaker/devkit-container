@@ -32,7 +32,7 @@ fn unescape(s: &str) -> String {
       i += 1;
     }
   }
-  String::from_utf8_lossy(&out).into_owned()
+  String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// Walk from `app_root/entry` upwards, stopping *before* `app_root`; `true` if any path on
