@@ -62,15 +62,18 @@ pub fn launch_script(doc: &DocumentMut) -> Result<String> {
 }
 
 /// `[tool.docker].required_persisted_dirs`, each entry validated so nothing can resolve to
-/// `/app` itself or outside it. A table still carrying the legacy keys without the new
-/// one is refused with the migration hint rather than silently chowning nothing.
+/// `/app` itself or outside it. A table still carrying a legacy key is refused with the
+/// migration hint — even next to the new key, which is exactly what `setup-project` leaves
+/// behind: honouring only the new list would silently drop whatever `chown_paths` named.
 #[cfg_attr(not(unix), allow(dead_code))] // only `run` (Unix) calls this
 pub fn required_persisted_dirs(doc: &DocumentMut) -> Result<Vec<String>> {
   let docker = doc.get("tool").and_then(|t| t.get("docker"));
+  if docker.is_some_and(|d| d.get("chown_paths").is_some() || d.get("mkdirs").is_some()) {
+    bail!(
+      "[tool.docker] still has chown_paths/mkdirs; fold chown_paths into required_persisted_dirs, move mkdirs scratch directories to temp dirs, and delete both keys"
+    );
+  }
   let Some(arr) = docker.and_then(|d| d.get("required_persisted_dirs")).and_then(|v| v.as_array()) else {
-    if docker.is_some_and(|d| d.get("chown_paths").is_some() || d.get("mkdirs").is_some()) {
-      bail!("[tool.docker] still uses chown_paths/mkdirs; run `devkit setup-project` and fold them into required_persisted_dirs");
-    }
     return Ok(Vec::new());
   };
   let mut out = Vec::new();
@@ -135,5 +138,9 @@ mod tests {
       .unwrap_err()
       .to_string();
     assert!(legacy.contains("chown_paths"), "{legacy}");
+    // Still refused next to the new key: setup-project adds the new key without removing
+    // the old ones, and `x` above would otherwise be silently dropped.
+    let both = doc("[tool.docker]\nrequired_persisted_dirs = [\"persisted_data\"]\nmkdirs = [\"x\"]\n");
+    assert!(required_persisted_dirs(&both).unwrap_err().to_string().contains("mkdirs"));
   }
 }
