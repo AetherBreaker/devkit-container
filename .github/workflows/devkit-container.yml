@@ -1,7 +1,7 @@
 # Releases the `devkit-container` entrypoint binary on its own tag stream (`container-vN`)
 # whenever a devkit release ships with changes under `crates/aeth-devkit-container/` or
 # in `Cargo.lock` since the previous container tag. Consumer Dockerfiles pin that tag, so
-# they drift only when the binary itself changed, not on every devkit release. It fires
+# a devkit release alone never changes what they build against. It fires
 # on the same `release: published` event as release.yml, so `devkit release` needs no
 # knowledge of it. The release it creates uses the workflow token, and events raised with
 # that token never start workflows, so nothing re-fires.
@@ -14,6 +14,12 @@ on:
 
 permissions:
   contents: read
+
+# Two devkit releases published inside one another's window would compute the same N;
+# serialised, the second one sees the first's tag.
+concurrency:
+  group: devkit-container
+  cancel-in-progress: false
 
 env:
   DEVKIT_TAG: ${{ github.event.release.tag_name || github.sha }}
@@ -38,7 +44,9 @@ jobs:
         shell: bash
         run: |
           prev="$(git tag --list 'container-v*' | sed 's/^container-v//' | sort -n | tail -1)"
-          if [ -n "$prev" ] && git diff --quiet "container-v$prev" "$GITHUB_SHA" -- crates/aeth-devkit-container Cargo.lock; then
+          # `devkit release` bumps every workspace crate's `version = ` line in Cargo.lock, so
+          # those are ignored; a real dependency bump still shows through its `checksum = `.
+          if [ -n "$prev" ] && git diff --quiet -I'^version = "' "container-v$prev" "$GITHUB_SHA" -- crates/aeth-devkit-container Cargo.lock; then
             echo "container unchanged since container-v$prev; nothing to release"
             exit 0
           fi
