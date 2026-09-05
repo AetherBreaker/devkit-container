@@ -24,16 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
 # Clone only the dependency manifest files first so the dep install layer
-# can be cached independently of source code changes. The readme keeps its path
-# (`project.readme` may point into a subdirectory) because the wheel build later
-# reads it from there; only a missing readme is tolerated, a failing helper is not.
+# can be cached independently of source code changes.
 RUN git clone --depth 1 --branch "${GIT_TAG}" "${GIT_REPO}" /tmp/repo \
-  && mv /tmp/repo/pyproject.toml /tmp/repo/uv.lock /app/ \
-  && readme_file=$(/app/devkit-container readme) \
-  && if [ -n "${readme_file}" ] && [ -f "/tmp/repo/${readme_file}" ]; then \
-       mkdir -p "/app/$(dirname "${readme_file}")" \
-       && mv "/tmp/repo/${readme_file}" "/app/${readme_file}"; \
-     fi
+  && mv /tmp/repo/pyproject.toml /tmp/repo/uv.lock /app/
 
 # Install all dependencies (without the project itself) using the frozen lockfile.
 # This layer is cached as long as pyproject.toml/uv.lock don't change, even
@@ -42,9 +35,20 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   extras=$(/app/devkit-container app-extra) \
   && uv sync --frozen --no-dev --no-install-project $extras
 
-# Now bring in the source tree and install the project itself as a
-# non-editable wheel so the source tree is not required at runtime.
-RUN mv /tmp/repo/{python_dir} /app/{python_dir} && rm -rf /tmp/repo
+# Now bring in the source tree, then the readme the wheel build reads, at the same
+# relative path (`project.readme` may point into a subdirectory). The tree moves first so
+# a readme inside it comes along and never pre-creates `/app/{python_dir}`, which would
+# make `mv` nest the tree. Only a missing readme is tolerated; a failing helper is not.
+RUN mv /tmp/repo/{python_dir} /app/{python_dir} \
+  && readme_file=$(/app/devkit-container readme) \
+  && if [ -n "${readme_file}" ] && [ -f "/tmp/repo/${readme_file}" ]; then \
+       mkdir -p "/app/$(dirname "${readme_file}")" \
+       && mv "/tmp/repo/${readme_file}" "/app/${readme_file}"; \
+     fi \
+  && rm -rf /tmp/repo
+
+# Install the project itself as a non-editable wheel so the source tree is not
+# required at runtime.
 
 RUN --mount=type=cache,target=/root/.cache/uv \
   extras=$(/app/devkit-container app-extra) \
