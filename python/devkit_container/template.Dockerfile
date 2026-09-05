@@ -24,12 +24,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
 # Clone only the dependency manifest files first so the dep install layer
-# can be cached independently of source code changes.
+# can be cached independently of source code changes. The readme keeps its path
+# (`project.readme` may point into a subdirectory) because the wheel build later
+# reads it from there; only a missing readme is tolerated, a failing helper is not.
 RUN git clone --depth 1 --branch "${GIT_TAG}" "${GIT_REPO}" /tmp/repo \
   && mv /tmp/repo/pyproject.toml /tmp/repo/uv.lock /app/ \
-  && { readme_file=$(/app/devkit-container readme) \
-  && [ -n "${readme_file}" ] && [ -f "/tmp/repo/${readme_file}" ] \
-  && mv "/tmp/repo/${readme_file}" /app/ || true; }
+  && readme_file=$(/app/devkit-container readme) \
+  && if [ -n "${readme_file}" ] && [ -f "/tmp/repo/${readme_file}" ]; then \
+       mkdir -p "/app/$(dirname "${readme_file}")" \
+       && mv "/tmp/repo/${readme_file}" "/app/${readme_file}"; \
+     fi
 
 # Install all dependencies (without the project itself) using the frozen lockfile.
 # This layer is cached as long as pyproject.toml/uv.lock don't change, even
