@@ -1,0 +1,109 @@
+# Releases the `devkit-container` entrypoint binary on its own tag stream (`container-vN`)
+# whenever a devkit release ships with changes under `crates/aeth-devkit-container/` or
+# in `Cargo.lock` since the previous container tag. Consumer Dockerfiles pin that tag, so
+# they drift only when the binary itself changed, not on every devkit release. It fires
+# on the same `release: published` event as release.yml, so `devkit release` needs no
+# knowledge of it. The release it creates uses the workflow token, and events raised with
+# that token never start workflows, so nothing re-fires.
+name: devkit-container
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEVKIT_TAG: ${{ github.event.release.tag_name || github.sha }}
+
+jobs:
+  version:
+    # Only devkit's own `v*` tags; a hand-made container release must not recurse.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    outputs:
+      n: ${{ steps.version.outputs.n }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          # Every tag, to find the previous container release.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Next container version, if anything changed
+        id: version
+        shell: bash
+        run: |
+          prev="$(git tag --list 'container-v*' | sed 's/^container-v//' | sort -n | tail -1)"
+          if [ -n "$prev" ] && git diff --quiet "container-v$prev" "$GITHUB_SHA" -- crates/aeth-devkit-container Cargo.lock; then
+            echo "container unchanged since container-v$prev; nothing to release"
+            exit 0
+          fi
+          echo "n=$(( ${prev:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.n
+    name: Container (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: .exe
+          - os: ubuntu-latest
+            # Fully static so the image needs no runtime libs.
+            target: x86_64-unknown-linux-musl
+            exe: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Named by target so the Dockerfile's ADD URL is stable across releases.
+      - name: Build the container entrypoint binary
+        shell: bash
+        run: |
+          cargo build --release -p aeth-devkit-container --target "${{ matrix.target }}"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/devkit-container${{ matrix.exe }}" \
+             "dist/devkit-container-${{ matrix.target }}${{ matrix.exe }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-${{ matrix.target }}
+          path: dist/devkit-container-*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          N: ${{ needs.version.outputs.n }}
+        run: |
+          ls -l dist
+          gh release create "container-v$N" --target "$GITHUB_SHA" \
+            --title "devkit-container $N" \
+            --notes "devkit-container entrypoint build $N, from devkit $DEVKIT_TAG. Pinned by the Dockerfile that devkit setup-project renders." \
+            dist/*

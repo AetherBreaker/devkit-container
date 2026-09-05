@@ -9,8 +9,9 @@ ARG GIT_TAG
 ARG GIT_REPO
 
 # The devkit container binary answers the build-time pyproject questions here and is the
-# entrypoint in the final stage. Pinned to the devkit version that rendered this file.
-ADD https://github.com/AetherBreaker/aeth-devkit/releases/download/v{devkit_version}/devkit-container-x86_64-unknown-linux-musl /app/devkit-container
+# entrypoint in the final stage. Pinned to a devkit-container release (its own tag
+# stream); setup-project fills a missing pin and keeps an existing one.
+ADD https://github.com/AetherBreaker/aeth-devkit/releases/download/container-v{container_version}/devkit-container-x86_64-unknown-linux-musl /app/devkit-container
 RUN chmod +x /app/devkit-container
 
 # Enable bytecode compilation
