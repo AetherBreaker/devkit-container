@@ -61,7 +61,7 @@ jobs:
           uv run maturin build --release --out dist
           uv run python -c "import zipfile,glob; names=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert 'devkit_container/template.Dockerfile' in names, names"
           uv run maturin develop
-          uv run devkit-container --version
+          uv run --no-sync devkit-container --version
 
   # The only place the entrypoint runs for real: the shipped template built around a
   # scratch app with this checkout's wheel installed (tests/docker_smoke.rs).

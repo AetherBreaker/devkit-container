@@ -196,8 +196,8 @@ fn scratch_repo(work: &Path, wheel: &Path) -> PathBuf {
 
 /// The wheel the image installs, built from this checkout for the image's platform. The
 /// binary is a static musl build so the same wheel serves a glibc image, and the platform
-/// tag is the generic `linux` one so uv accepts it there; the release workflow builds the
-/// manylinux wheel instead, which is the only difference between this image and a real one.
+/// tag is the generic `linux` one so uv accepts it there; a released wheel is manylinux,
+/// which is the only difference between this wheel and a released one.
 fn build_wheel(root: &Path, out: &Path) -> PathBuf {
   let mut cmd = Command::new("uv");
   cmd
