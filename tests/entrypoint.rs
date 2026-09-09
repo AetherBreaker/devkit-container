@@ -56,7 +56,7 @@ fn run_refuses_a_non_root_caller() {
   assert!(String::from_utf8_lossy(&out.stderr).contains("must run as root"));
 }
 
-/// Needs root: `sudo -E cargo test -p aeth-devkit-container -- --ignored`.
+/// Needs root: `sudo -E cargo test -- --ignored`.
 #[cfg(unix)]
 #[test]
 #[ignore]

@@ -1,22 +1,26 @@
 [package]
-  name    = "aeth-devkit-container"
-  version.workspace = true
-  edition.workspace = true
-  publish.workspace = true
+  name    = "devkit-container"
+  version = "1.0.0"
+  edition = "2024"
+  publish = false
 
 [[bin]]
   name = "devkit-container"
   path = "src/main.rs"
 
 [dependencies]
-  anyhow    = { workspace = true }
-  clap      = { workspace = true }
-  toml_edit = { workspace = true }
+  anyhow    = "1.0.104"
+  clap      = { version = "4", features = ["derive"] }
+  toml_edit = "0.25.13"
 
 # `nix` has no Windows build at all, so it must not even be resolved there.
 [target.'cfg(unix)'.dependencies]
-  nix = { workspace = true }
+  nix = { version = "0.31.3", features = ["user"] }
 
 [dev-dependencies]
-  serde_json = { workspace = true }
-  tempfile   = { workspace = true }
+  serde_json = { version = "1.0.151", features = ["preserve_order"] }
+  tempfile   = "3.27.0"
+
+[profile.release]
+  strip       = true
+  incremental = true
