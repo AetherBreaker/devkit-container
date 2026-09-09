@@ -3,8 +3,9 @@
 //! the environment it finds itself in. Needs docker, the `x86_64-unknown-linux-musl`
 //! target and the network (base image, PyPI), so it is `#[ignore]`; CI runs it with
 //! `--ignored`. The template is used verbatim except for where two things come from: the
-//! entrypoint binary is the local cross-build, not the release download, and the git
-//! clone reads a bare copy of the scratch repo inside the build context, not GitHub.
+//! package resolves to this checkout's wheel through a path source, not the release on the
+//! index, and the git clone reads a bare copy of the scratch repo inside the build context,
+//! not GitHub.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,8 +13,8 @@ use std::process::{Command, Output};
 const IMAGE_TAG_PREFIX: &str = "devkit-smoke";
 const MUSL: &str = "x86_64-unknown-linux-musl";
 
-fn workspace() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+fn root() -> PathBuf {
+  Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap()
 }
 
 /// Run to completion; panic with both streams on a non-zero exit.
@@ -123,13 +124,18 @@ def main() -> None:
     sys.exit(0 if not fails else 1)
 "#;
 
+/// Where the scratch app's path source finds the wheel, relative to its `pyproject.toml`:
+/// under the scratch tree on the host for `uv lock`, and under `/app` in the image for the
+/// frozen syncs.
+const WHEEL_DIR: &str = "wheels";
+
 const PYPROJECT: &str = r#"[project]
 name = "smoke-app"
 version = "0.1.0"
 description = "devkit-container smoke test app"
 readme = "docs/README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["devkit-container"]
 
 [project.optional-dependencies]
 app = ["colorama>=0.4"]
@@ -141,19 +147,34 @@ run-app-smoke = "smoke_app:main"
 requires = ["uv_build>=0.8.0,<0.12"]
 build-backend = "uv_build"
 
+[tool.uv.sources]
+devkit-container = { path = "{wheel_dir}/{wheel}" }
+
 [tool.docker]
 services = ["smoke"]
 required_persisted_dirs = ["persisted_data", "persisted_data/logs"]
 "#;
 
 /// The scratch project as a bare git repo with a `v0.1.0` tag, the way the Dockerfile
-/// clones a real project. `uv lock` runs on the host: the image syncs `--frozen`.
-fn scratch_repo(work: &Path) -> PathBuf {
+/// clones a real project. It depends on `devkit-container` like a real project does, through
+/// a path source to the local wheel in place of the index, so every `uv sync --frozen` in the
+/// image installs and keeps it from the lock. Installing the wheel between the syncs instead
+/// cannot work: sync removes whatever the lock does not name. `uv lock` runs on the host; the
+/// image syncs `--frozen`.
+fn scratch_repo(work: &Path, wheel: &Path) -> PathBuf {
   let src = work.join("scratch");
-  write(&src, "pyproject.toml", PYPROJECT);
+  let wheel_name = wheel.file_name().unwrap().to_string_lossy();
+  write(
+    &src,
+    "pyproject.toml",
+    &PYPROJECT.replace("{wheel_dir}", WHEEL_DIR).replace("{wheel}", &wheel_name),
+  );
+  std::fs::create_dir_all(src.join(WHEEL_DIR)).unwrap();
+  std::fs::copy(wheel, src.join(WHEEL_DIR).join(&*wheel_name)).unwrap();
   write(&src, "src/smoke_app/__init__.py", APP);
   write(&src, "docs/README.md", "# smoke-app\n\nBuilt by the devkit-container smoke test.\n");
-  write(&src, ".gitignore", ".venv/\n");
+  // The wheel stays out of the repo: the image gets it from the build context.
+  write(&src, ".gitignore", &format!(".venv/\n{WHEEL_DIR}/\n"));
   ok(Command::new("uv").args(["lock"]).current_dir(&src));
   let git = |args: &[&str]| {
     ok(
@@ -173,44 +194,66 @@ fn scratch_repo(work: &Path) -> PathBuf {
   bare
 }
 
-/// The entrypoint for the image, cross-built from this checkout.
-fn build_entrypoint(ws: &Path) -> PathBuf {
-  let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-  let target_dir = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| ws.join("target"), PathBuf::from);
-  let mut cmd = Command::new(cargo);
+/// The wheel the image installs, built from this checkout for the image's platform. The
+/// binary is a static musl build so the same wheel serves a glibc image, and the platform
+/// tag is the generic `linux` one so uv accepts it there; the release workflow builds the
+/// manylinux wheel instead, which is the only difference between this image and a real one.
+fn build_wheel(root: &Path, out: &Path) -> PathBuf {
+  let mut cmd = Command::new("uv");
   cmd
-    .args(["build", "--release", "-p", "aeth-devkit-container", "--target", MUSL])
-    .arg("--target-dir")
-    .arg(&target_dir)
-    .current_dir(ws);
+    .args([
+      "run",
+      "maturin",
+      "build",
+      "--release",
+      "--target",
+      MUSL,
+      "--compatibility",
+      "linux",
+      "--out",
+    ])
+    .arg(out)
+    .current_dir(root);
   // Windows has no `cc` for the musl target; rustc's bundled lld links it self-contained.
   if cfg!(windows) {
     cmd.env("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", "rust-lld");
   }
   ok(&mut cmd);
-  target_dir.join(MUSL).join("release").join("devkit-container")
+  let wheel = std::fs::read_dir(out)
+    .unwrap()
+    .flatten()
+    .map(|e| e.path())
+    .find(|p| p.extension().is_some_and(|x| x == "whl"))
+    .expect("maturin wrote a wheel");
+  let name = wheel.file_name().unwrap().to_string_lossy().into_owned();
+  assert!(
+    name.ends_with("linux_x86_64.whl"),
+    "the image needs the generic linux tag, got {name}"
+  );
+  wheel
 }
 
-/// The shipped template with `{python_dir}` filled, the release download swapped for the
-/// local binary, and the bare repo copied in for the clone to read. Nothing else changes.
-fn dockerfile(ws: &Path) -> String {
-  let template = std::fs::read_to_string(ws.join("python/aeth_devkit/templates/docker/template.Dockerfile")).unwrap();
-  let (mut swapped, mut copied) = (0, 0);
+/// The shipped template with `{python_dir}` filled, the bare repo copied in for the clone to
+/// read, and the local wheel copied to where the scratch app's lock points before the first
+/// sync, so the package arrives the way a real build gets it: from uv.lock, by `uv sync
+/// --frozen`. Nothing else changes.
+fn dockerfile(root: &Path, wheel_name: &str) -> String {
+  let template = std::fs::read_to_string(root.join("python/devkit_container/template.Dockerfile")).unwrap();
+  let (mut copied, mut wheeled) = (0, 0);
   let mut out = String::new();
   for line in template.lines() {
-    if line.starts_with("ADD https://") && line.contains("devkit-container") {
-      out.push_str("COPY devkit-container /app/devkit-container\n");
-      swapped += 1;
-      continue;
-    }
     if line.starts_with("RUN git clone ") {
       out.push_str("COPY scratch.git /tmp/scratch.git\n");
       copied += 1;
     }
+    if wheeled == 0 && line.starts_with("RUN --mount=type=cache") {
+      out.push_str(&format!("COPY {wheel_name} /app/{WHEEL_DIR}/{wheel_name}\n"));
+      wheeled += 1;
+    }
     out.push_str(&line.replace("{python_dir}", "src"));
     out.push('\n');
   }
-  assert_eq!((swapped, copied), (1, 1), "the template changed shape; update this test");
+  assert_eq!((copied, wheeled), (1, 1), "the template changed shape; update this test");
   out
 }
 
@@ -224,7 +267,7 @@ fn docker(args: &[&str]) -> Command {
 #[ignore = "needs docker, the x86_64-unknown-linux-musl target and the network; run with --ignored"]
 fn the_image_starts_the_app_through_the_entrypoint_with_a_working_environment() {
   ok(&mut docker(&["version", "--format", "{{.Server.Os}}"]));
-  let ws = workspace();
+  let root = root();
   let work = tempfile::tempdir().unwrap();
   let id = format!("{}-{}", std::process::id(), std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
   let guard = Cleanup {
@@ -232,13 +275,14 @@ fn the_image_starts_the_app_through_the_entrypoint_with_a_working_environment() 
     volume: format!("{IMAGE_TAG_PREFIX}-{id}"),
   };
 
-  eprintln!("cross-building the entrypoint for {MUSL}");
-  let binary = build_entrypoint(&ws);
+  eprintln!("building the wheel for {MUSL}");
+  let wheel = build_wheel(&root, &work.path().join("wheels"));
+  let wheel_name = wheel.file_name().unwrap().to_string_lossy().into_owned();
   eprintln!("scratch project + bare repo");
-  scratch_repo(work.path());
+  scratch_repo(work.path(), &wheel);
   let context = work.path().join("context");
-  std::fs::copy(&binary, context.join("devkit-container")).unwrap();
-  std::fs::write(context.join("Dockerfile"), dockerfile(&ws)).unwrap();
+  std::fs::copy(&wheel, context.join(&wheel_name)).unwrap();
+  std::fs::write(context.join("Dockerfile"), dockerfile(&root, &wheel_name)).unwrap();
 
   eprintln!("docker build {}", guard.image);
   ok(
@@ -255,13 +299,27 @@ fn the_image_starts_the_app_through_the_entrypoint_with_a_working_environment() 
   );
 
   // Build-time queries, as the Dockerfile ran them.
-  let readme = docker(&["run", "--rm", "--entrypoint", "/app/devkit-container", &guard.image, "readme"])
-    .output()
-    .unwrap();
+  let readme = docker(&[
+    "run",
+    "--rm",
+    "--entrypoint",
+    "/app/.venv/bin/devkit-container",
+    &guard.image,
+    "readme",
+  ])
+  .output()
+  .unwrap();
   assert_eq!(text(&readme), "docs/README.md");
-  let extra = docker(&["run", "--rm", "--entrypoint", "/app/devkit-container", &guard.image, "app-extra"])
-    .output()
-    .unwrap();
+  let extra = docker(&[
+    "run",
+    "--rm",
+    "--entrypoint",
+    "/app/.venv/bin/devkit-container",
+    &guard.image,
+    "app-extra",
+  ])
+  .output()
+  .unwrap();
   assert_eq!(text(&extra), "--extra app");
 
   // Refused before anything is created: no volume, and not root.
