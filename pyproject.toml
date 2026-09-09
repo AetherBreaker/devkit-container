@@ -10,16 +10,218 @@
   dev = [
     "aeth-devkit>=11.0.1",
     "maturin>=1.7,<2",
-  ]
+    "poethepoet>=0.46.0",
+    "pyright>=1.1.411",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.15",
+    "tombi>=1.5",
+  ]                          # setup-project added: "poethepoet>=0.46.0", "pyright>=1.1.411", "pytest>=8.0", "pytest-asyncio>=0.24", "pytest-cov>=5.0", "ruff>=0.15", "tombi>=1.5"
 
 [build-system]
   requires      = ["maturin>=1.7,<2"]
   build-backend = "maturin"
 
+[tool.coverage.run]
+  data_file   = ".cache/.coverage"
+  source_pkgs = ["devkit_container"]
+
+[tool.coverage.report]
+  show_missing = true
+
+[tool.coverage.html]
+  directory = ".cache/htmlcov"
+
+[tool.coverage.xml]
+  output = ".cache/coverage.xml"
+
+[tool.coverage.lcov]
+  output = ".cache/coverage.lcov"
+
 [tool.maturin]
   bindings      = "bin"
-  python-source = "python"
   module-name   = "devkit_container"
+  python-source = "python"
+
+[tool.poe]
+  include_script = [{ script = "aeth_devkit:tasks", executor = { type = "uv", frozen = true } }]
+
+[tool.pyright]
+  typeCheckingMode = "standard"
+
+  verboseOutput          = true
+  useLibraryCodeForTypes = true
+
+  enableReachabilityAnalysis  = true
+  analyzeUnannotatedFunctions = true
+  deprecateTypingAliases      = true
+
+  reportPropertyTypeMismatch          = true
+  reportMissingTypeStubs              = false
+  reportImportCycles                  = true
+  reportUntypedFunctionDecorator      = true
+  reportUntypedClassDecorator         = true
+  reportUntypedNamedTuple             = true
+  reportPrivateUsage                  = true
+  # reportConstantRedefinition          = true
+  reportDeprecated                    = true
+  # reportMissingSuperCall              = true
+  reportUninitializedInstanceVariable = true
+  reportMissingParameterType          = true
+  # reportMissingTypeArgument           = true
+  reportUnnecessaryIsInstance         = true
+  reportUnnecessaryCast               = true
+  reportUnnecessaryComparison         = true
+  reportUnnecessaryContains           = true
+  reportInvalidStubStatement          = true
+  reportUnnecessaryTypeIgnoreComment  = true
+  reportMatchNotExhaustive            = true
+  reportUnreachable                   = true
+  reportImplicitOverride              = true
+  reportMissingTypeArgument           = false
+
+  executionEnvironments = [{ root = "python", extraPaths = ["python"] }]
+
+[tool.pytest.ini_options]
+  addopts      = [
+    "--cov",
+    "--cov-report=term-missing",
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+  ]
+  cache_dir    = ".cache/pytest"
+  testpaths    = ["tests"]
+  xfail_strict = true
+  asyncio_mode = "auto"
+
+[tool.ruff]
+  cache-dir = ".cache/ruff"
+  # Sister projects' packages count as first-party (ruff `src` supports globs).
+  src       = ["./python", "../*/src", "../*/python"]
+
+  exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "dist",
+    "node_modules",
+    "venv",
+  ]
+
+  fix = true
+
+  indent-width = 2
+  line-length  = 135
+
+  [tool.ruff.format]
+    docstring-code-format = true
+
+  [tool.ruff.lint]
+    extend-select = [
+      "A",
+      "ANN001",
+      "ASYNC",
+      "B",
+      "C4",
+      "C90",
+      "D",
+      "DTZ",
+      "FBT003",
+      "LOG",
+      "N",
+      "NPY",
+      "PD",
+      "PERF",
+      "PL",
+      "PYI",
+      "RUF",
+      "T10",
+      "TC",
+      "TID",
+      "UP",
+    ]
+    ignore        = [
+      "A004",
+      "PD008",
+      "PD009",
+      "PLC0415",
+      "PLR0913",
+      "PLW0603",
+      "PIE790",
+    ]
+
+    [tool.ruff.lint.flake8-tidy-imports.banned-api]
+      # Delivered by ruff exactly when violated, so the reasoning costs no context otherwise.
+      "__future__.annotations".msg = "Python 3.14 evaluates all annotations lazily (PEP 649) with or without this import. What it adds is PEP 563 stringification, which breaks pydantic, dataclasses.fields() introspection, and typing.get_type_hints."
+
+    [tool.ruff.lint.pydocstyle]
+      convention = "google"
+
+    [tool.ruff.lint.per-file-ignores]
+      # No missing-docstring rules in tests: a test's name is its summary, and test docstrings
+      # read to agents as statements of intent that were never reviewed. D2xx+ still apply to
+      # docstrings a test does have.
+      "tests/**" = ["D1"]
+
+    [tool.ruff.lint.isort]
+      combine-as-imports = true
+      known-first-party  = ["devkit_container"]
+
+      [tool.ruff.lint.isort.import-heading]
+        first-party      = "First party imports"
+        future           = "Future imports"
+        local-folder     = "Local folder imports"
+        standard-library = "Standard library imports"
+        third-party      = "Third party imports"
+
+[tool.tombi]
+  toml-version = "v1.1.0"
+
+  [tool.tombi.files]
+    exclude = [
+      ".bzr",
+      ".direnv",
+      ".eggs",
+      ".git",
+      ".git-rewrite",
+      ".hg",
+      ".mypy_cache",
+      ".nox",
+      ".pants.d",
+      ".pytype",
+      ".ruff_cache",
+      ".svn",
+      ".tox",
+      ".venv",
+      "__pypackages__",
+      "_build",
+      "buck-out",
+      "dist",
+      "node_modules",
+      "venv",
+    ]
+
+  [tool.tombi.format.rules]
+    indent-sub-tables               = true
+    indent-table-key-value-pairs    = true
+    key-value-equals-sign-alignment = true
+    trailing-comment-alignment      = true
 
 [tool.uv.sources]
   aeth-devkit = [{ index = "SFTPyPI" }]

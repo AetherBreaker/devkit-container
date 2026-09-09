@@ -1,0 +1,136 @@
+# Installed and kept current by `devkit setup-project`; edits are replaced on the next run.
+# Triggered by `devkit release`, which creates the GitHub release with no assets and then
+# waits for this workflow to build, attach and publish them. Wheels are built per platform
+# with maturin; every artefact is attached and published from one job, so a partial
+# publish can only follow a complete build.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+# Read-only by default; only the publish job may write (attach assets to the release).
+# The build jobs run project and dependency code, which must not hold a write token.
+# Every checkout uses `github.sha`, the commit the release's tag pointed at when the
+# event fired: the tag itself could be moved while a job is queued.
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name }}
+
+jobs:
+  build:
+    name: Wheel (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_17"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: The tag must name the committed version
+        shell: bash
+        run: |
+          v="$(uv version --short)"
+          [ "v$v" = "$TAG" ] || { echo "tag $TAG does not match pyproject.toml version $v" >&2; exit 1; }
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # Empty on Windows, where the input is ignored.
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --strip --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build the sdist
+        run: uv build --sdist --out-dir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: The tag must name the committed version
+        shell: bash
+        run: |
+          v="$(uv version --short)"
+          [ "v$v" = "$TAG" ] || { echo "tag $TAG does not match pyproject.toml version $v" >&2; exit 1; }
+          ls -l dist
+
+      # The tag is mutable: the release for it can be deleted and recreated while the
+      # build ran. `github.event.release.id` is the release this run was triggered by; a
+      # different one now owning the tag must not receive these artefacts.
+      - name: The release must still be the one that triggered this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ github.event.release.id }}
+        run: |
+          current="$(gh release view "$TAG" --json databaseId --jq .databaseId)"
+          [ "$current" = "$RELEASE_ID" ] || { echo "release $TAG is now #$current, not #$RELEASE_ID which triggered this run; not publishing" >&2; exit 1; }
+
+      - name: Attach artefacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Publish to SFTPyPI
+        env:
+          UV_PUBLISH_USERNAME: ${{ secrets.UV_INDEX_SFTPYPI_USERNAME }}
+          UV_PUBLISH_PASSWORD: ${{ secrets.UV_INDEX_SFTPYPI_PASSWORD }}
+        run: uv publish --index SFTPyPI dist/*.whl dist/*.tar.gz
