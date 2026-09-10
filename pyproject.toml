@@ -9,6 +9,8 @@
 [dependency-groups]
   dev = [
     "aeth-devkit>=13.0.0",
+    "devkit-claude-hooks>=1.0.0",
+    "devkit-poe-complete>=1.0.0",
     "maturin>=1.7,<2",
     "poethepoet>=0.46.0",
     "pyright>=1.1.411",
@@ -17,27 +19,28 @@
     "pytest-cov>=5.0",
     "ruff>=0.15",
     "tombi>=1.5",
-  ]                          # setup-project added: "poethepoet>=0.46.0", "pyright>=1.1.411", "pytest>=8.0", "pytest-asyncio>=0.24", "pytest-cov>=5.0", "ruff>=0.15", "tombi>=1.5"
+  ]                                # setup-project added: "devkit-claude-hooks", "devkit-poe-complete"
 
 [build-system]
   requires      = ["maturin>=1.7,<2"]
   build-backend = "maturin"
 
-[tool.coverage.run]
-  data_file   = ".cache/.coverage"
-  source_pkgs = ["devkit_container"]
+[tool.coverage]
+  [tool.coverage.run]
+    data_file   = ".cache/.coverage"
+    source_pkgs = ["devkit_container"]
 
-[tool.coverage.report]
-  show_missing = true
+  [tool.coverage.report]
+    show_missing = true
 
-[tool.coverage.html]
-  directory = ".cache/htmlcov"
+  [tool.coverage.html]
+    directory = ".cache/htmlcov"
 
-[tool.coverage.xml]
-  output = ".cache/coverage.xml"
+  [tool.coverage.xml]
+    output = ".cache/coverage.xml"
 
-[tool.coverage.lcov]
-  output = ".cache/coverage.lcov"
+  [tool.coverage.lcov]
+    output = ".cache/coverage.lcov"
 
 [tool.maturin]
   bindings      = "bin"
@@ -224,7 +227,9 @@
     trailing-comment-alignment      = true
 
 [tool.uv.sources]
-  aeth-devkit = [{ index = "SFTPyPI" }]
+  aeth-devkit         = [{ index = "SFTPyPI" }]
+  devkit-claude-hooks = [{ index = "SFTPyPI" }]
+  devkit-poe-complete = [{ index = "SFTPyPI" }]
 
 [[tool.uv.index]]
   name        = "SFTPyPI"
