@@ -11,7 +11,7 @@
     "aeth-devkit>=14.0.0",
     "devkit-claude-hooks>=1.0.0",
     "devkit-poe-complete>=1.0.0",
-    "devkit-templates>=1.0.0",
+    "devkit-templates>=1.1.0",
     "maturin>=1.7,<2",
     "poethepoet>=0.46.0",
     "pyright>=1.1.411",

@@ -101,6 +101,17 @@ Follow Conventional Commits: `<type>(<scope>): <short summary>`, with types `fea
 project-wide changes). A `fix` body must describe what the bug was, what caused it, and how this commit
 fixes it.
 
+## GitHub Workflow Naming
+
+Every `name:` under `.github/workflows/` says what runs, so a run is legible from the Actions page
+alone. A name with a colon must be quoted.
+
+- Workflow: a verb and the checks or outputs, e.g. `Verify: Rust checks, wheel`,
+  `Release: build the wheel and sdist, attach them, publish`.
+- Job: `<Area>: <what runs>`, matrix values in parentheses, e.g. `Rust: fmt, clippy, tests (ubuntu-latest)`.
+- Step: the command or the assertion, e.g. `cargo test --workspace`, never `Test`.
+- `run-name:` when the run is about something other than the commit, e.g. `Release <tag>`.
+
 ## Secrets
 
 `.env` contains live credentials — never print its contents back in full, commit it, or suggest
