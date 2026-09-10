@@ -1,4 +1,4 @@
-name: CI
+name: "Verify: Rust checks, wheel, container smoke"
 
 on:
   push:
@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
+    name: "Rust: fmt, clippy, tests (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,17 +26,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Format
+      - name: cargo fmt --all --check
         run: cargo fmt --all --check
 
-      - name: Clippy
+      - name: cargo clippy --all-targets -- -D warnings
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Test
+      - name: cargo test
         run: cargo test
 
   wheel:
-    name: Wheel build (${{ matrix.os }})
+    name: "Wheel: maturin build, template.Dockerfile ships in it (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -54,7 +54,7 @@ jobs:
           python-version: "3.14"
 
       # The package data must ride in the wheel: a project renders its Dockerfile from it.
-      - name: Build the wheel and check the template ships in it
+      - name: maturin build, assert template.Dockerfile is in the wheel, devkit-container --version
         shell: bash
         run: |
           uv sync
@@ -66,7 +66,7 @@ jobs:
   # The only place the entrypoint runs for real: the shipped template built around a
   # scratch app with this checkout's wheel installed (tests/docker_smoke.rs).
   container-smoke:
-    name: Container smoke (docker)
+    name: "Docker: build the image from the template, run the entrypoint"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Build the image from the template and start the app through the entrypoint
+      - name: cargo test --test docker_smoke -- --ignored (builds the image, starts the app through the entrypoint)
         run: |
           uv sync
           cargo test --test docker_smoke -- --ignored --nocapture
