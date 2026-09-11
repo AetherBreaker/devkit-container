@@ -8,7 +8,7 @@
 
 [dependency-groups]
   dev = [
-    "aeth-devkit>=14.1.0",
+    "aeth-devkit>=15.0.0",
     "devkit-claude-hooks>=1.0.0",
     "devkit-poe-complete>=1.1.0",
     "devkit-templates>=1.1.0",

@@ -4,15 +4,15 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "aeth-devkit"
-version = "14.1.0"
+version = "15.0.0"
 source = { registry = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" }
 dependencies = [
     { name = "poethepoet" },
 ]
-sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/ad5/55807e42b9c8f/aeth_devkit-14.1.0.tar.gz", hash = "sha256:ad555807e42b9c8fb8405096b7ca5d9ad8143a59292af4f901b0e54076cec2a8" }
+sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/bc0/3705e8c0bcadb/aeth_devkit-15.0.0.tar.gz", hash = "sha256:bc03705e8c0bcadb744288891101feb914c1576d48fbf8ab5d1e387f4f7c69d8" }
 wheels = [
-    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/3b5/1762cb6b3f4f8/aeth_devkit-14.1.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3b51762cb6b3f4f805a8d55cab86a35968ebb09396c38d502b36d5fe29a05f78" },
-    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/3ea/41eed226bef40/aeth_devkit-14.1.0-py3-none-win_amd64.whl", hash = "sha256:3ea41eed226bef4040629e5c018e5327cf0c3cef51fcf2e4183760d4717e5298" },
+    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/371/e5b5a2466c4af/aeth_devkit-15.0.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:371e5b5a2466c4af4aee0854ba29864c793c3e8ad62a508a4218fc199ccb6b21" },
+    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/516/6688f6b2caec9/aeth_devkit-15.0.0-py3-none-win_amd64.whl", hash = "sha256:5166688f6b2caec9f5f5f27eb1556293dd824a6e8a7bd393d8f721cf9200ecdf" },
 ]
 
 [[package]]
@@ -128,7 +128,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aeth-devkit", specifier = ">=14.1.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
+    { name = "aeth-devkit", specifier = ">=15.0.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-claude-hooks", specifier = ">=1.0.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-poe-complete", specifier = ">=1.1.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-templates", specifier = ">=1.1.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
@@ -154,14 +154,14 @@ wheels = [
 
 [[package]]
 name = "devkit-templates"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" }
 dependencies = [
     { name = "aeth-devkit" },
 ]
-sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/d58/293ed2c000129/devkit_templates-1.1.0.tar.gz", hash = "sha256:d58293ed2c000129028395eaf6488b58fa8fdbe233518485308bb140eae863a5" }
+sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/d05/2a0348cea1940/devkit_templates-1.2.0.tar.gz", hash = "sha256:d052a0348cea1940668ac41734c88b56636dead9c8addb2c8a88469a5a33a92c" }
 wheels = [
-    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/30c/6e0fba1a9c675/devkit_templates-1.1.0-py3-none-any.whl", hash = "sha256:30c6e0fba1a9c6752e30972f984150ae500c04d1a8f4cbe95ebbfc4c4b42b96e" },
+    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/017/13f09f6be7b58/devkit_templates-1.2.0-py3-none-any.whl", hash = "sha256:01713f09f6be7b58cfa5757f3d6c86650f9615ed68704359d55e3a21842a5231" },
 ]
 
 [[package]]
