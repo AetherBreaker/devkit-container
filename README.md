@@ -127,8 +127,9 @@ container built from the same image (handshake, the tunnel heartbeat fresh and r
 secrets scrubbed, stale then re-upped when the hub forgets and re-learns the peer, the
 two-file healthcheck naming the file), and the ping against a local HTTP listener (`/start` once,
 plain, `/fail`). The wireguard test needs the host kernel's wireguard module (`sudo modprobe
-wireguard`). `ci/render.sh` renders both templates through the released devkit into a scratch
-project with the mode off and on and fails on a render error or a marker left behind.
+wireguard`). `ci/render.sh` dry-runs `setup-project` on a scratch project holding this checkout's
+wheel, with the mode off and on, so both templates meet the released devkit's parser before a
+release; a render error fails it.
 
 ## Releasing
 

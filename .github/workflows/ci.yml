@@ -1,4 +1,4 @@
-name: "Verify: Rust checks, wheel, container smoke"
+name: "Verify: Rust checks, wheel, container smoke, template render"
 
 on:
   push:
@@ -72,8 +72,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
       - uses: Swatinem/rust-cache@v2
 
@@ -81,7 +79,30 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: cargo test --test docker_smoke -- --ignored (builds the image, starts the app through the entrypoint)
+      - name: sudo modprobe wireguard
+        run: sudo modprobe wireguard
+
+      - name: cargo test --test docker_smoke --test docker_supervisor -- --ignored (builds the image, runs the entrypoint in exec, supervise and wireguard mode)
         run: |
           uv sync
-          cargo test --test docker_smoke -- --ignored --nocapture
+          cargo test --test docker_smoke --test docker_supervisor -- --ignored --nocapture
+
+  # The two templates meet the released devkit's parser here, before a release of this repo.
+  render:
+    name: "Render: dry-run both modes of a scratch Docker project through the released devkit"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: "ci/render.sh: setup-project --dry-run into a scratch project with the mode off and on"
+        run: |
+          uv sync
+          bash ci/render.sh
