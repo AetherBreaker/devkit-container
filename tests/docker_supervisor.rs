@@ -304,10 +304,12 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
     ])
     .arg(&image),
   );
-  wait_for("the tunnel heartbeat", Duration::from_secs(90), &[&spoke, &hub], || {
+  // Both beats: the tunnel's arrives on the first poll, the app's once it has started.
+  wait_for("both heartbeats", Duration::from_secs(90), &[&spoke, &hub], || {
     exec(&spoke, &["cat", "/app/persisted_data/logs/wireguard-heartbeat.txt"])
       .status
       .success()
+      && exec(&spoke, &["cat", "/app/persisted_data/logs/heartbeat.txt"]).status.success()
   });
   let hc_ok = healthcheck(&spoke);
   assert!(hc_ok.status.success(), "{}", String::from_utf8_lossy(&hc_ok.stderr));
