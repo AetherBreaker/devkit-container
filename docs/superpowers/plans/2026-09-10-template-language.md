@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: branch `template-language` in `aeth-devkit`; branch `template-language` in `devkit-templates`.
 
-- [ ] **Step 1: Clone `devkit-templates` if it is not beside the other repos**
+- [x] **Step 1: Clone `devkit-templates` if it is not beside the other repos**
 
 ```bash
 cd "/d/SFT Software Projects"
@@ -42,7 +42,7 @@ cd devkit-templates && git status --short && git log --oneline -1
 
 Expected: a clean checkout on `main`. If the directory already existed, skip the clone and make sure it is on `main` with no uncommitted changes (`git status --short` prints nothing).
 
-- [ ] **Step 2: Sync both environments and branch**
+- [x] **Step 2: Sync both environments and branch**
 
 ```bash
 cd "/d/SFT Software Projects/aeth-devkit" && uv sync && git switch -c template-language
@@ -51,7 +51,7 @@ cd "/d/SFT Software Projects/devkit-templates" && uv sync && git switch -c templ
 
 Expected: both `git branch --show-current` print `template-language`.
 
-- [ ] **Step 3: Confirm the toolchain builds the workspace as it is**
+- [x] **Step 3: Confirm the toolchain builds the workspace as it is**
 
 ```bash
 cd "/d/SFT Software Projects/aeth-devkit" && cargo build -p aeth-devkit-setup
@@ -75,7 +75,7 @@ Expected: `Finished`. Nothing to commit yet.
   - `pub struct World<'a> { pub flags: &'a [(&'static str, bool)], pub keys: &'a dyn Fn(&str) -> Value, pub dep: &'a dyn Fn(&str) -> bool }`
   - `pub fn evaluate(expr: &str, world: &World) -> anyhow::Result<bool>`
 
-- [ ] **Step 1: Add the dependencies**
+- [x] **Step 1: Add the dependencies**
 
 In `aeth-devkit/Cargo.toml` under `[workspace.dependencies]` add (keep the table's alignment style):
 
@@ -94,7 +94,7 @@ In `crates/aeth-devkit-setup/Cargo.toml` under `[dependencies]` add:
 Run: `cargo build -p aeth-devkit-setup`
 Expected: Monty compiles (a minute or two the first time; `target/` caches it afterwards).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `crates/aeth-devkit-setup/src/gate_eval.rs` with only the test module for now:
 
@@ -168,12 +168,12 @@ mod tests {
 
 Add `pub mod gate_eval;` to `src/lib.rs`'s module list (alphabetical: after `pub mod format;`).
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cargo test -p aeth-devkit-setup gate_eval`
 Expected: compile error, `Value`, `World` and `evaluate` not found.
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 Above the test module in `gate_eval.rs`:
 
@@ -266,12 +266,12 @@ fn to_monty(v: &Value) -> MontyObject {
 
 If the Monty API differs from this in detail (the crate is 0.0.x), read `target/`'s copy of `monty/src/run_progress.rs` and `monty-types/src/object.rs` and adapt the four call sites (`MontyRun::new`, `start`, `FunctionCall::resume`, `MontyObject::dict`); keep the public signatures of this module unchanged.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p aeth-devkit-setup gate_eval`
 Expected: 2 passed. If `keys(1)` produces a different wording, adjust the implementation's message, not the test's expectation: the test states the contract.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/aeth-devkit-setup/Cargo.toml crates/aeth-devkit-setup/src/gate_eval.rs crates/aeth-devkit-setup/src/lib.rs
@@ -293,7 +293,7 @@ git commit -m "feat(setup): evaluate gate expressions with Monty behind a one-fu
   - `pub(crate) fn find_marker(line: &str, format: Format) -> Result<Option<Marker<'_>>>`
   - `pub(crate) enum Body { If { expr: String, label: Option<String>, block: bool }, End(Option<String>), PassThrough }` with `pub(crate) fn parse_body(body: &str) -> Result<Body>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/gate.rs`:
 
@@ -432,12 +432,12 @@ mod marker_tests {
 
 Add `pub mod gate;` to `src/lib.rs` (before `pub mod gate_eval;`).
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p aeth-devkit-setup gate::marker_tests`
 Expected: compile errors for `find_marker`, `Marker`, `Body`, `parse_body`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Insert between the `impl Format` block and the tests:
 
@@ -550,12 +550,12 @@ fn split_label(s: &str) -> (String, Option<String>) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p aeth-devkit-setup gate::marker_tests`
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/aeth-devkit-setup/src/gate.rs crates/aeth-devkit-setup/src/lib.rs
@@ -579,7 +579,7 @@ git commit -m "feat(setup): parse the # ! markers of the template language"
   - `pub fn collect_dir(dir: &Path) -> Result<Vec<(String, String)>>` (every file under `dir`, as `(relative name with '/', text)`)
   - in `context.rs`: `pub fn dependencies_of(doc: &DocumentMut) -> HashSet<String>` (the body of the `collect` closure in `discover`, which now calls it)
 
-- [ ] **Step 1: Extract `dependencies_of` in `context.rs`**
+- [x] **Step 1: Extract `dependencies_of` in `context.rs`**
 
 Replace the `let mut dependencies = HashSet::new(); let mut collect = …; collect(…); … ` block in `ProjectContext::discover` with `let dependencies = dependencies_of(&doc);` and add, next to `services_key`:
 
@@ -619,7 +619,7 @@ pub fn dependencies_of(doc: &toml_edit::DocumentMut) -> HashSet<String> {
 Run: `cargo test -p aeth-devkit-setup context`
 Expected: the existing context tests still pass.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `gate.rs`:
 
@@ -732,12 +732,12 @@ publish-url = "https://x/"
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cargo test -p aeth-devkit-setup gate::gates_tests`
 Expected: compile errors for `Facts`, `Gates`, `expressions`, `collect_dir`.
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 Insert after `split_label`:
 
@@ -908,12 +908,12 @@ fn scalar(v: &toml_edit::Value) -> Value {
 
 (`verdicts` is a thin alias kept so the working-copy call reads distinctly from the HEAD one at the call site; clippy accepts it, but if it flags the duplication, inline it.)
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p aeth-devkit-setup gate::gates_tests`
 Expected: 5 passed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/aeth-devkit-setup/src/gate.rs crates/aeth-devkit-setup/src/context.rs
@@ -931,7 +931,7 @@ git commit -m "feat(setup): sweep gate expressions, evaluate them once, refuse a
 - Consumes: `Gates::verdict`, `find_marker`, `parse_body`.
 - Produces: `impl Gates { pub fn apply(&self, text: &str, format: Format, name: &str) -> Result<String> }`; `pub(crate) fn heading_level(line: &str) -> Option<usize>` and `pub(crate) fn fence_delimiter(line: &str) -> Option<String>` (moved from `md_block.rs` in Task 6).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `gate.rs`:
 
@@ -1052,12 +1052,12 @@ mod apply_tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p aeth-devkit-setup gate::apply_tests`
 Expected: compile error, no method `apply`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Insert after the `impl Gates` block (before `fn verdicts`):
 
@@ -1256,12 +1256,12 @@ pub(crate) fn heading_level(line: &str) -> Option<usize> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p aeth-devkit-setup gate::`
 Expected: every `gate::` test passes (marker, gates, apply modules). Adjust error wording in the implementation until each `needle` in `malformed_structure_is_an_error_naming_the_line` matches; do not weaken the test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/aeth-devkit-setup/src/gate.rs
@@ -1286,7 +1286,7 @@ git commit -m "feat(setup): render explicit, one-line and structural blocks of t
   - `pub fn gates_for(ctx: &ProjectContext, templates_dir: Option<&Path>, venv: &dyn packages::Venv, head_pyproject: Option<&str>) -> Result<gate::Gates>` in `lib.rs`.
   - `docker::apply(ctx, templates_dir, deps, gates: &Gates, changes)` (signature change consumed by Task 7).
 
-- [ ] **Step 1: `templates.rs`: gate inside `load`, delete `gate`**
+- [x] **Step 1: `templates.rs`: gate inside `load`, delete `gate`**
 
 Change `load` and `load_optional`:
 
@@ -1311,7 +1311,7 @@ pub fn load_optional(templates_dir: &Path, name: &str, ctx: &ProjectContext, esc
 
 Add `use crate::gate::{Format, Gates};` to the imports. Delete `pub fn gate` (the `# setup-project:` block-marker function) and its `gate_tests` module (the tests using `if-publish-index` / `if-no-aeth-ext`).
 
-- [ ] **Step 2: `lib.rs`: build the gates once and pass them everywhere**
+- [x] **Step 2: `lib.rs`: build the gates once and pass them everywhere**
 
 Add after `run_with`'s templates step (right after `let templates_dir = templates_dir.as_path();`):
 
@@ -1399,11 +1399,11 @@ pub fn gates_for(
 
 (`docker::scaffold::TEMPLATE_FILE` is added in Task 7; until then use the literal `"compose.template.yaml"` and switch to the constant there.)
 
-- [ ] **Step 3: `md_block.rs`: delete the structural gating**
+- [x] **Step 3: `md_block.rs`: delete the structural gating**
 
 Delete `IF_DEP_MARKER`, `apply_if_dep`, `marker_dep`, `fence_delimiter`, `heading_level` (the last two now live in `gate.rs`) and every test from `if_dep_section_kept_when_dependency_present` to the end of the file (`if_dep_section_dropped_when_dependency_absent`, `if_dep_marker_without_heading_closes_at_any_heading`, `if_dep_gated_section_at_end_of_block`, `a_blank_line_between_marker_and_heading_does_not_disable_the_gate`, `adjacent_if_dep_sections_are_gated_independently`, `a_hash_inside_a_code_fence_does_not_close_a_gated_section`, `a_code_fence_is_preserved_when_the_dependency_is_present`). Keep `merge_managed_block` and its tests; drop the now-unused `ctx` helper and `use crate::context::ProjectContext;` if nothing else uses them. Update the module doc's mention of `if-dep`.
 
-- [ ] **Step 4: `cli.rs`: the refusal covers every gate**
+- [x] **Step 4: `cli.rs`: the refusal covers every gate**
 
 Replace the `if committing { refuse_uncommitted_services(&root)?; }` block with:
 
@@ -1426,7 +1426,7 @@ Replace the `if committing { refuse_uncommitted_services(&root)?; }` block with:
 
 Update the doc comment on `refuse_uncommitted_services` to say it is the `services` half of the refusal and that `gates_for` is the other.
 
-- [ ] **Step 5: `pin`: build gates for the Dockerfile render**
+- [x] **Step 5: `pin`: build gates for the Dockerfile render**
 
 In `crates/aeth-devkit-pin/src/lib.rs` replace
 
@@ -1443,7 +1443,7 @@ with
 
 (`render`'s new signature lands in Task 7; this line compiles after it.)
 
-- [ ] **Step 6: Build**
+- [x] **Step 6: Build**
 
 Run: `cargo build -p aeth-devkit-setup`
 Expected: errors only in `docker/` (Task 7's files: `scaffold::load`, `static_files::render`, `docker::apply`). Everything in `lib.rs`, `templates.rs`, `md_block.rs`, `cli.rs` compiles. Do not commit yet; Task 7 completes the build.
@@ -1467,7 +1467,7 @@ Expected: errors only in `docker/` (Task 7's files: `scaffold::load`, `static_fi
   - `static_files::render(ctx, venv, gates) -> Result<Option<String>>`.
   - `docker::apply(ctx, templates_dir, deps, gates, changes)`.
 
-- [ ] **Step 1: Write the failing `parse_rules` tests**
+- [x] **Step 1: Write the failing `parse_rules` tests**
 
 In `compose_rules.rs`'s test module add:
 
@@ -1564,12 +1564,12 @@ and make `run_full` and `the_repo_rule_skips_itself_without_an_origin` parse it:
 
 (In the origin test, apply `.replace(…)` to `STD` before `parse_rules`.) Note `parse_rules` on the whole `services:` document: the first key on the stack is `services`, then `app`; the paths must be relative to the service, so the test passes the block starting at `services:` and the implementation below skips two levels when the first line is `services:`; simpler: `parse_rules` takes the lines and a `depth: usize` of leading keys to skip. Use `parse_rules(&lines, 2)` in these tests (`services`, `app`) and `parse_rules(&block, 1)` from the scaffold (`{service}`). Update the signature everywhere to `parse_rules(lines: &[String], skip: usize)`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p aeth-devkit-setup compose_rules`
 Expected: compile errors for `parse_rules`, `Rule`, and the `service_edits` arity.
 
-- [ ] **Step 3: Implement rules in `compose_rules.rs`**
+- [x] **Step 3: Implement rules in `compose_rules.rs`**
 
 Make `Kind` `pub` and add, replacing the `RULES` constant:
 
@@ -1655,7 +1655,7 @@ Add `use anyhow::{Context as _, Result, bail};` at the top. Change `service_edit
 
 (the body below already works on `path: &[&str]` and `kind: Kind`; remove the old `for (path, kind) in RULES` line and the now-dead `RULES` doc comment.) Update the module doc: the rule kinds come from the scaffold's annotations.
 
-- [ ] **Step 4: `scaffold.rs`: the new markers, rules, and the container package source**
+- [x] **Step 4: `scaffold.rs`: the new markers, rules, and the container package source**
 
 Replace the constants and `Scaffold`/`parse`/`load`:
 
@@ -1713,7 +1713,7 @@ pub fn load(ctx: &ProjectContext, venv: &dyn Venv, templates_dir: &Path, gates: 
 
 Update `parse`'s imports (`Context as _`) and the unit test `TPL` constant to the new markers with one rule line, asserting `sc.rules` holds `container_name` as `Exact` and that `sc.block` has no `!rule` line.
 
-- [ ] **Step 5: `static_files.rs`: gate the Dockerfile**
+- [x] **Step 5: `static_files.rs`: gate the Dockerfile**
 
 ```rust
 pub fn render(ctx: &ProjectContext, venv: &dyn Venv, gates: &Gates) -> Result<Option<String>> {
@@ -1729,11 +1729,11 @@ pub fn render(ctx: &ProjectContext, venv: &dyn Venv, gates: &Gates) -> Result<Op
 
 `apply(ctx, venv, consent, changes)` gains `gates: &Gates` and passes it to `render`. In the module's test `render_substitutes_python_dir_from_the_installed_package`, build gates with `Gates::default()` (no gates in that fixture line) and add a second assertion: a template `"FROM x\n# !if rust:\nRUN cargo\n# !end\n"` renders the `RUN` line only when the gates hold `rust` true (construct via `Gates::build(&[("template.Dockerfile".into(), text.into())], &"[project]\nname = \"p\"\n".parse().unwrap(), None, &Facts { rust: true, docker_files: false })`).
 
-- [ ] **Step 6: `docker/mod.rs`: thread the gates and the rules**
+- [x] **Step 6: `docker/mod.rs`: thread the gates and the rules**
 
 `pub fn apply(ctx, templates_dir, deps, gates: &Gates, changes)` calls `static_files::apply(ctx, deps.venv, &consent, gates, changes)?` and `compose(ctx, templates_dir, deps.venv, docker.runner, &consent, gates, changes)`. In `compose`, `let sc = scaffold::load(ctx, venv, templates_dir, gates)?;` and `compose_rules::service_edits(&lines, &svc, &sc_doc, &sc_svc, name, &sc.rules)`.
 
-- [ ] **Step 7: The two fixture compose templates**
+- [x] **Step 7: The two fixture compose templates**
 
 Overwrite `tests/fixtures/templates/docker/compose.template.yaml` with today's content in the new syntax (the aeth-ext block gated, every enforced key annotated; this is also exactly what Task 10 writes into `devkit-templates`):
 
@@ -1792,12 +1792,12 @@ networks:
 
 Copy the same file to `tests/fixtures/docker/compose.template.yaml` (the fixture standing in for the container package; `docker.rs`'s `package_dirs` points every package at `fixtures/docker`, so from now on the compose scaffold in those tests comes from "the container package" and exercises the container path of `scaffold::load`). Keep the templates copy too: `apply.rs`'s `run_via` also maps `devkit_container` to `fixtures/docker`, so both paths are covered by the two suites only if one fixture lacks the file; to cover the fallback, `apply.rs`'s stub venv for `devkit_container` stays at `fixtures/docker` (container path) and add one test in `docker.rs`, `the_templates_copy_is_the_fallback_without_a_container_compose_template`, that builds a `StubVenv` whose `devkit_container` dir is a temp copy of `fixtures/docker` without `compose.template.yaml` and asserts the run still creates `docker/compose.yaml`.
 
-- [ ] **Step 8: Build and run the docker tests**
+- [x] **Step 8: Build and run the docker tests**
 
 Run: `cargo build -p aeth-devkit-setup -p aeth-devkit-pin && cargo test -p aeth-devkit-setup compose_rules scaffold static_files && cargo test -p aeth-devkit-setup --test docker`
 Expected: the workspace builds; `compose_rules`, `scaffold`, `static_files` unit tests pass; `tests/docker.rs` fails only in tests whose fixtures still carry old markers (fixed in Task 8) and otherwise passes. If `without_aeth_ext_the_alerts_block_is_absent` or `fresh_project_gets_dockerfile_and_compose_then_is_idempotent` fail for another reason, fix the implementation now.
 
-- [ ] **Step 9: Commit Tasks 6 and 7 together (one compiling state)**
+- [x] **Step 9: Commit Tasks 6 and 7 together (one compiling state)**
 
 ```bash
 git add -A crates/aeth-devkit-setup crates/aeth-devkit-pin
@@ -1820,7 +1820,7 @@ git commit -m "feat(setup): render every template through the gate language; com
 - Consumes: gated text from `templates::load` (no markers reach `merge_pyproject`).
 - Produces: `merge_pyproject(original, template, ctx, log)` unchanged in signature, marker-free in behaviour.
 
-- [ ] **Step 1: Rewrite the fixture markers**
+- [x] **Step 1: Rewrite the fixture markers**
 
 In `pyproject.template.toml`:
 - line 9 `# setup-project: if-docker-services` (above `[project]`) → `# S!if keys("tool.docker.services"):`
@@ -1834,14 +1834,14 @@ In both release workflow templates: every `# setup-project: if-publish-index` �
 
 Check nothing is left: `grep -rn "setup-project: " crates/aeth-devkit-setup/tests/fixtures` prints nothing.
 
-- [ ] **Step 2: Delete the marker machinery in `toml_merge.rs`**
+- [x] **Step 2: Delete the marker machinery in `toml_merge.rs`**
 
 Delete: the constants `MARKER`, `IF_DEP_MARKER`, `IF_DOCKER_MARKER`, `IF_DOCKER_SERVICES_MARKER`; `check_markers` and its call in `merge_pyproject`; `Merger::gated_off` and its two call sites (the `if self.gated_off(template, key) { continue; }` in `merge_table` and the `fresh.retain(|k, _| !self.gated_off(ttable, k))` line); `strip_marker_lines`, `is_marker_line`, `marker_lines`, `conditional_dep`, `conditional_docker` and their call sites. `Merger` keeps `ctx` only if something else reads it; if `drop_own_package` is the only user of `ctx.name`, drop the field and pass `ctx` where needed. Delete the tests `a_conditional_table_follows_the_dependency`, `a_marker_above_a_value_gates_that_key_only`, `if_docker_table_is_skipped_without_a_docker_setup`, `if_docker_table_is_merged_with_a_docker_setup`, `if_docker_services_needs_the_switch_not_just_docker_files`, `an_unknown_marker_is_an_error`, `the_marker_comment_never_reaches_the_project`, `stripping_the_marker_keeps_the_other_comments_and_spacing`, and the `ctx(has_docker)` helper if unused. Update the module doc.
 
 Run: `cargo test -p aeth-devkit-setup toml_merge`
 Expected: the remaining `toml_merge` tests pass.
 
-- [ ] **Step 3: Add the gate-flip refusal test in `apply.rs`**
+- [x] **Step 3: Add the gate-flip refusal test in `apply.rs`**
 
 After `an_uncommitted_services_change_cancels_a_committing_run` add:
 
@@ -1878,12 +1878,12 @@ fn a_pyproject_edit_that_flips_a_gate_cancels_a_committing_run() {
 
 (If the fixture's dev-group line is spelled differently, adjust the `replacen` needle to the fixture, keeping the assertion that the edit adds `mypy` to a dependency group.)
 
-- [ ] **Step 4: Run the integration suites**
+- [x] **Step 4: Run the integration suites**
 
 Run: `cargo test -p aeth-devkit-setup --test apply && cargo test -p aeth-devkit-setup --test docker && cargo test -p aeth-devkit-setup --test packages`
 Expected: all pass. `uv_init_gitignore_is_replaced_and_mypy_is_conditional` proves the structural TOML gate; `agents_md_gets_a_managed_block_and_keeps_project_text` the markdown one; `release_workflow_*` the explicit YAML ones; `an_uncommitted_services_change_cancels_a_committing_run` still passes because the `services` check precedes the gate sweep. Fix implementation bugs these surface before moving on.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A crates/aeth-devkit-setup
@@ -1898,7 +1898,7 @@ git commit -m "refactor(setup): drop the setup-project: marker machinery; fixtur
 - Modify: `aeth-devkit/README.md` (new `### Template language` section after `### devkit setup-project`; edit the `if-dep` mentions in the **Project discovery** and **pyproject merge** bullets)
 - Modify: `aeth-devkit/.github/workflows/ci.yml` (the `Templates:` job)
 
-- [ ] **Step 1: Write the language reference**
+- [x] **Step 1: Write the language reference**
 
 Insert after the `### devkit setup-project` section's last bullet:
 
@@ -1944,7 +1944,7 @@ existing file (`exact`, `presence`, `repo`, `volume-target`, `env-keys`, `exact-
 
 Then edit the two older mentions: in **Project discovery**, `(drives \`if-dep\` gating)` → `(drives \`dep("…")\` gates)`; in **pyproject merge**, replace the clause about `if-dep` / `if-docker` / `if-docker-services` markers with `gates above a table header (structural) or on a key line (see **Template language**) keep a table or key out of projects the condition excludes`.
 
-- [ ] **Step 2: Point the CI templates job at the templates tree, not the last release**
+- [x] **Step 2: Point the CI templates job at the templates tree, not the last release**
 
 In `.github/workflows/ci.yml`, in the `Templates:` job's install line, replace
 
@@ -1960,12 +1960,12 @@ uv pip install --python "$RUNNER_TEMP/tpl/bin/python" --no-deps "devkit-template
 
 and add a comment above it: `# main of the templates repo, not the last release: this job checks the two trees against each other, and a language change lands in both before either is released.` Rename the job's `name:` to `"Templates: dry-run the templates repo's main through this tree's devkit"`.
 
-- [ ] **Step 3: fmt, clippy, the whole setup crate**
+- [x] **Step 3: fmt, clippy, the whole setup crate**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test -p aeth-devkit-setup -p aeth-devkit-pin -p aeth-devkit-core`
 Expected: clean, all green.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md .github/workflows/ci.yml
@@ -1986,7 +1986,7 @@ git commit -m "docs(setup): document the template language; CI renders the templ
 - Modify: `pyproject.toml` (the floor)
 - Modify: `README.md` (the language paragraph)
 
-- [ ] **Step 1: Rewrite the markers exactly as in Task 8, Step 1**
+- [x] **Step 1: Rewrite the markers exactly as in Task 8, Step 1**
 
 Apply the same four edits to `pyproject.template.toml`, the one to `AGENTS.template.md`, and the `publish_index` replacements in both workflow templates. Overwrite `docker/compose.template.yaml` with the file from Task 7, Step 7. Then:
 
@@ -1996,11 +1996,11 @@ grep -rn "setup-project: " python/devkit_templates/templates && echo "OLD MARKER
 
 Expected: `clean`.
 
-- [ ] **Step 2: Raise the floor and fix the README**
+- [x] **Step 2: Raise the floor and fix the README**
 
 In `pyproject.toml`: `dependencies = ["aeth-devkit>=15.0.0"]` (the release Task 11 makes; the version is the workspace's `14.1.0` plus a major). In `README.md`, in **The floor**, replace `the \`# setup-project:\` line gates, the table and value markers` with `the \`# !\` gate language (see aeth-devkit's README, **Template language**)`.
 
-- [ ] **Step 3: Render the tree through the local devkit build**
+- [x] **Step 3: Render the tree through the local devkit build**
 
 The released devkit cannot read this syntax yet, so render with the branch build:
 
@@ -2014,7 +2014,7 @@ printf '[project]\nname = "scratch-app"\nversion = "0.1.0"\nrequires-python = ">
 
 Expected: a `Would change:` report listing `pyproject.toml`, `docker/Dockerfile` (or a note that the container package is absent, which is fine here), `docker/compose.yaml`, `AGENTS.md`, `.github/workflows/release.yml` and the rest; no `error:` line; no `!if`/`!end`/`setup-project` text in the report's previews. Repeat with `services = []` removed from the scratch pyproject (a plain project) and confirm the report has no `docker/` entries and no `[tool.docker]` in the pyproject preview.
 
-- [ ] **Step 4: Commit and push the branch**
+- [x] **Step 4: Commit and push the branch**
 
 ```bash
 git add -A && git commit -m "feat(templates): the # ! gate language; floor aeth-devkit>=15.0.0"
@@ -2029,7 +2029,7 @@ Its CI will be red until aeth-devkit 15.0.0 exists (the `floor` matrix leg insta
 
 **Files:** none new.
 
-- [ ] **Step 1: The full aeth-devkit suite, once**
+- [x] **Step 1: The full aeth-devkit suite, once**
 
 ```bash
 cd "/d/SFT Software Projects/aeth-devkit" && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
@@ -2037,7 +2037,7 @@ cd "/d/SFT Software Projects/aeth-devkit" && cargo fmt --all --check && cargo cl
 
 Expected: green.
 
-- [ ] **Step 2: Open and merge the aeth-devkit PR**
+- [x] **Step 2: Open and merge the aeth-devkit PR**
 
 ```bash
 git push -u origin template-language
@@ -2053,7 +2053,7 @@ EOF
 
 Wait for CI (the `Templates:` job now renders the templates repo's `main`, which still has the old syntax until Step 4 merges there; if that job fails on that alone, merge the templates branch first, then re-run). Merge with `gh pr merge --squash --delete-branch` once green, or hand the PR to the owner if the repository requires it.
 
-- [ ] **Step 3: Release aeth-devkit 15.0.0**
+- [x] **Step 3: Release aeth-devkit 15.0.0**
 
 ```bash
 git switch main && git pull && uv sync
@@ -2062,7 +2062,7 @@ uv run devkit release major "the # ! template language: Python gate expressions,
 
 Needs the SFTPyPI credentials in `.env`; if they are absent on this machine, stop here and report that the owner runs this step. Expected: the release workflow builds and publishes; `uv run devkit --version` after `uv sync` in any project shows 15.0.0 on the index.
 
-- [ ] **Step 4: Merge and release devkit-templates**
+- [x] **Step 4: Merge and release devkit-templates**
 
 ```bash
 cd "/d/SFT Software Projects/devkit-templates"
@@ -2083,7 +2083,7 @@ uv run devkit release minor "the # ! gate language; needs aeth-devkit 15"
 
 Same credentials note as Step 3.
 
-- [ ] **Step 5: Verify the pairing in a real project**
+- [x] **Step 5: Verify the pairing in a real project**
 
 ```bash
 cd "/d/SFT Software Projects/devkit-container" && uv run poe lock && uv run poe setup-project --dry-run --no-vscode
