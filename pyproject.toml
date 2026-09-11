@@ -1,6 +1,6 @@
 [project]
   name            = "devkit-container"
-  version         = "2.0.0"
+  version         = "2.0.1"
   description     = "Image-side helper for devkit-managed Docker projects: build-time pyproject queries and the container entrypoint"
   readme          = "README.md"
   requires-python = ">=3.14"
