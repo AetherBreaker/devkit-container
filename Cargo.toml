@@ -11,13 +11,19 @@
 [dependencies]
   anyhow    = "1.0.104"
   clap      = { version = "4", features = ["derive"] }
+  jiff      = { version = "0.2", features = ["tzdb-bundle-always"] }
   toml_edit = "0.25.13"
 
-# `nix` has no Windows build at all, so it must not even be resolved there.
+# `nix` and `signal-hook` have no Windows build at all, so they must not even be resolved there.
+# `ureq` only serves the supervisor, which is Unix-only; listing it here keeps `ring`'s C sources
+# out of the Windows build.
 [target.'cfg(unix)'.dependencies]
-  nix = { version = "0.31.3", features = ["user"] }
+  nix         = { version = "0.31.3", features = ["user", "signal", "process"] }
+  signal-hook = "0.4"
+  ureq        = { version = "3.4", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+  jiff       = "0.2"
   serde_json = { version = "1.0.151", features = ["preserve_order"] }
   tempfile   = "3.27.0"
 

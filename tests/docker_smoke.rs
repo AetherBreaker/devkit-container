@@ -1,7 +1,6 @@
 //! The image end to end: the shipped Dockerfile template built around a scratch app,
 //! started through the entrypoint with a mounted persisted dir, and the app reporting on
-//! the environment it finds itself in. Needs docker, the `x86_64-unknown-linux-musl`
-//! target and the network (base image, PyPI), so it is `#[ignore]`; CI runs it with
+//! the environment it finds itself in. Needs docker and the network (base image, PyPI), so it is `#[ignore]`; CI runs it with
 //! `--ignored`. The template is used verbatim except for where two things come from: the
 //! package resolves to this checkout's wheel through a path source, not the release on the
 //! index, and the git clone reads a bare copy of the scratch repo inside the build context,
@@ -11,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const IMAGE_TAG_PREFIX: &str = "devkit-smoke";
-const MUSL: &str = "x86_64-unknown-linux-musl";
 
 fn root() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap()
@@ -194,30 +192,27 @@ fn scratch_repo(work: &Path, wheel: &Path) -> PathBuf {
   bare
 }
 
-/// The wheel the image installs, built from this checkout for the image's platform. The
-/// binary is a static musl build so the same wheel serves a glibc image, and the platform
-/// tag is the generic `linux` one so uv accepts it there; a released wheel is manylinux,
-/// which is the only difference between this wheel and a released one.
+/// The maturin release that builds the wheel; the image carries its own Rust toolchain and gcc.
+const MATURIN_IMAGE: &str = "ghcr.io/pyo3/maturin:v1.15.0";
+
+/// The wheel the image installs, built from this checkout inside the maturin container: a
+/// manylinux wheel exactly as a release builds one, so no cross-compiling and no C toolchain
+/// on the host. Two named volumes keep the cargo registry and the target dir between runs
+/// (the host's `target/` is never written to); they are caches, so `Cleanup` leaves them.
 fn build_wheel(root: &Path, out: &Path) -> PathBuf {
-  let mut cmd = Command::new("uv");
+  // Created here so it is ours, not the container's root: the temp dir must stay removable.
+  std::fs::create_dir_all(out).unwrap();
+  // `root()` is canonical, which on Windows is a `\\?\` verbatim path Docker does not take.
+  let src = root.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+  let mut cmd = Command::new("docker");
   cmd
-    .args([
-      "run",
-      "maturin",
-      "build",
-      "--release",
-      "--target",
-      MUSL,
-      "--compatibility",
-      "linux",
-      "--out",
-    ])
-    .arg(out)
-    .current_dir(root);
-  // Windows has no `cc` for the musl target; rustc's bundled lld links it self-contained.
-  if cfg!(windows) {
-    cmd.env("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", "rust-lld");
-  }
+    .args(["run", "--rm", "-v"])
+    .arg(format!("{src}:/io"))
+    .arg("-v")
+    .arg(format!("{}:/out", out.display()))
+    .args(["-v", "devkit-container-cargo-registry:/usr/local/cargo/registry"])
+    .args(["-v", "devkit-container-target:/build", "-e", "CARGO_TARGET_DIR=/build"])
+    .args([MATURIN_IMAGE, "build", "--release", "--out", "/out"]);
   ok(&mut cmd);
   let wheel = std::fs::read_dir(out)
     .unwrap()
@@ -227,8 +222,8 @@ fn build_wheel(root: &Path, out: &Path) -> PathBuf {
     .expect("maturin wrote a wheel");
   let name = wheel.file_name().unwrap().to_string_lossy().into_owned();
   assert!(
-    name.ends_with("linux_x86_64.whl"),
-    "the image needs the generic linux tag, got {name}"
+    name.contains("manylinux") && name.ends_with("x86_64.whl"),
+    "expected a manylinux x86_64 wheel, got {name}"
   );
   wheel
 }
@@ -264,7 +259,7 @@ fn docker(args: &[&str]) -> Command {
 }
 
 #[test]
-#[ignore = "needs docker, the x86_64-unknown-linux-musl target and the network; run with --ignored"]
+#[ignore = "needs docker and the network; run with --ignored"]
 fn the_image_starts_the_app_through_the_entrypoint_with_a_working_environment() {
   ok(&mut docker(&["version", "--format", "{{.Server.Os}}"]));
   let root = root();
@@ -275,7 +270,7 @@ fn the_image_starts_the_app_through_the_entrypoint_with_a_working_environment() 
     volume: format!("{IMAGE_TAG_PREFIX}-{id}"),
   };
 
-  eprintln!("building the wheel for {MUSL}");
+  eprintln!("building the wheel in {MATURIN_IMAGE}");
   let wheel = build_wheel(&root, &work.path().join("wheels"));
   let wheel_name = wheel.file_name().unwrap().to_string_lossy().into_owned();
   eprintln!("scratch project + bare repo");
