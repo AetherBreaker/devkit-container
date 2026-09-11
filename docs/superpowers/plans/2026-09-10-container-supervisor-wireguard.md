@@ -1969,7 +1969,7 @@ EOF
 
 Merge once CI is green (`gh pr merge --squash --delete-branch`).
 
-- [ ] **Step 3: Release**
+- [x] **Step 3: Release**
 
 ```bash
 git switch main && git pull && uv sync
