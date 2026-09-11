@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: `pyproject::supervise(&DocumentMut) -> Result<bool>`, `pyproject::wireguard(&DocumentMut) -> Result<bool>`, `pyproject::services(&DocumentMut) -> Vec<String>`.
 
-- [ ] **Step 1: Branch and add the dependencies**
+- [x] **Step 1: Branch and add the dependencies**
 
 ```bash
 git switch -c supervisor-wireguard
@@ -59,7 +59,7 @@ In `Cargo.toml`:
 Run: `cargo build`
 Expected: `Finished` (on Windows `nix`/`signal-hook`/`ureq` are skipped).
 
-- [ ] **Step 2: Build the smoke wheel inside the maturin container**
+- [x] **Step 2: Build the smoke wheel inside the maturin container**
 
 `ring` has C sources, so the smoke wheel can no longer be cross-compiled from a host with no C toolchain (the Windows dev machines). The test already needs Docker, so the wheel is built where the image is: in the official maturin container with the repo mounted, a native manylinux build with the container's gcc, the same way the release job builds one. In `tests/docker_smoke.rs`:
 
@@ -117,14 +117,14 @@ cargo test --test docker_smoke -- --ignored --nocapture
 
 Expected: `building the wheel in ghcr.io/pyo3/maturin:v1.15.0`, then maturin's `📦 Built wheel to /out/devkit_container-<version>-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` in the output, then the existing assertions pass. The first run pulls the maturin image and compiles cold; later runs reuse the two volumes and the wheel takes about ten seconds. (Verified on this checkout from Windows with Docker Desktop: 10.5 s warm, ring included.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock tests/docker_smoke.rs
 git commit -m "chore(deps): jiff, signal-hook, ureq; the smoke wheel is built in the maturin container"
 ```
 
-- [ ] **Step 4: Write the failing tests**
+- [x] **Step 4: Write the failing tests**
 
 In `src/pyproject.rs`'s test module add:
 
@@ -146,12 +146,12 @@ In `src/pyproject.rs`'s test module add:
   }
 ```
 
-- [ ] **Step 5: Run the test to verify it fails**
+- [x] **Step 5: Run the test to verify it fails**
 
 Run: `cargo test pyproject::tests::the_switches`
 Expected: compile error, functions not found.
 
-- [ ] **Step 6: Write the implementation**
+- [x] **Step 6: Write the implementation**
 
 Add to `src/pyproject.rs`:
 
@@ -190,12 +190,12 @@ pub fn services(doc: &DocumentMut) -> Vec<String> {
 }
 ```
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [x] **Step 7: Run the test to verify it passes**
 
 Run: `cargo test pyproject`
 Expected: all `pyproject` tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/pyproject.rs
@@ -218,7 +218,7 @@ git commit -m "feat(pyproject): read the supervise and wireguard switches"
   - `pub fn check(path: &Path, max_age: u64, now: jiff::Timestamp) -> Result<(), String>` (`Err` carries the one-line reason)
   - `pub fn write(path: &Path, now: jiff::Timestamp) -> Result<()>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/heartbeat.rs`:
 
@@ -310,12 +310,12 @@ Fix the first `check` test's last assertion to what the contract says (the comme
 
 Add `mod heartbeat;` to `main.rs`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test heartbeat`
 Expected: compile errors, functions not found.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Above the tests:
 
@@ -386,12 +386,12 @@ pub fn write(path: &Path, now: jiff::Timestamp) -> Result<()> {
 
 (`jiff::Timestamp`'s `Display` is RFC 3339 with `Z`; if the assertion on the written text fails because of sub-second digits, format with `now.strftime("%Y-%m-%dT%H:%M:%SZ")` instead: the file's contract is "an ISO 8601 timestamp", not a byte-exact form.)
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test heartbeat`
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/heartbeat.rs src/main.rs
@@ -411,7 +411,7 @@ git commit -m "feat(heartbeat): parse, check and write heartbeat timestamp files
 - Consumes: `heartbeat::{check, logs_dir, APP_FILE, DEFAULT_MAX_AGE_SECS}`.
 - Produces: `healthcheck::run(files: &[PathBuf], max_age: u64) -> u8` (exit code; reasons on stderr); the CLI `devkit-container healthcheck [--file PATH]... [--max-age SECS] [--app-root DIR]`.
 
-- [ ] **Step 1: Write the failing binary test**
+- [x] **Step 1: Write the failing binary test**
 
 In `tests/entrypoint.rs` add:
 
@@ -457,12 +457,12 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
 
 Add `jiff` to `[dev-dependencies]` in `Cargo.toml` (`jiff = "0.2"`; it is already a dependency, so this only makes it visible to the test crate). Add `use std::path::PathBuf;` where the test file needs it (it already imports `Path`).
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test --test entrypoint healthcheck`
 Expected: FAIL, clap reports an unrecognised subcommand (exit 2).
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/healthcheck.rs`:
 
@@ -519,12 +519,12 @@ and in `main`'s match, before the `Run` arms:
 
 (The `match` currently binds `result`; an early `return` from inside the match arm is the least churn. Keep the `Run` arms as they are for now; Task 8 changes them.)
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cargo test --test entrypoint healthcheck`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthcheck.rs src/main.rs tests/entrypoint.rs Cargo.toml Cargo.lock
@@ -547,7 +547,7 @@ git commit -m "feat(healthcheck): the subcommand that replaces the compose shell
   - `#[cfg(unix)] pub fn agent() -> ureq::Agent` (one per process; 10 s global timeout)
   - `#[cfg(unix)] pub fn send(agent: &ureq::Agent, url: &str, body: &str) -> Result<(), String>` (blocking; GET without a body, POST with one; the error text never contains the URL)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/ping.rs`:
 
@@ -607,12 +607,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test ping`
 Expected: compile errors.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Above the tests:
 
@@ -700,12 +700,12 @@ pub fn send(agent: &ureq::Agent, url: &str, body: &str) -> Result<(), String> {
 
 (`ureq`'s `rustls` feature installs `ring` as the process's crypto provider itself, so no `CryptoProvider::install_default` call is needed; TLS 1.2 and 1.3, Mozilla's roots from `webpki-roots`.)
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test ping`
 Expected: 5 passed on Linux, 4 on Windows (`agent`, `send` and their test are `cfg(unix)`; add `#[cfg_attr(not(unix), allow(dead_code))]` on the module declaration in `main.rs` if the Windows build warns about unused items).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ping.rs src/main.rs
@@ -728,7 +728,7 @@ git commit -m "feat(ping): healthchecks.io URLs in aeth_ext's shape, sent with u
   - `pub fn parse_latest_handshake(wg_show: &str, peer_public_key: &str) -> Option<u64>`
   - `#[cfg(unix)] pub struct Tunnel { cfg: Config }` with `pub fn start(cfg: Config) -> Result<Tunnel>` (preflight, bring-up, public key logged, first handshake), `pub fn latest_handshake(&self) -> Result<Option<u64>>`, `pub fn act(&self, action: Action) -> Result<()>`, `pub fn down(&self)`
 
-- [ ] **Step 1: Write the failing tests (pure parts)**
+- [x] **Step 1: Write the failing tests (pure parts)**
 
 Create `src/wireguard.rs`:
 
@@ -814,12 +814,12 @@ mod tests {
 
 Add `mod wireguard;` to `main.rs` with `#[cfg_attr(not(unix), allow(dead_code))]`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test wireguard`
 Expected: compile errors.
 
-- [ ] **Step 3: Write the pure implementation**
+- [x] **Step 3: Write the pure implementation**
 
 Above the tests:
 
@@ -926,12 +926,12 @@ pub fn parse_latest_handshake(wg_show: &str, peer_public_key: &str) -> Option<u6
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test wireguard`
 Expected: 4 passed.
 
-- [ ] **Step 5: Write the shell-out half**
+- [x] **Step 5: Write the shell-out half**
 
 Append, below the pure parts:
 
@@ -1070,7 +1070,7 @@ mod unix {
 Run: `cargo build && cargo clippy --all-targets -- -D warnings`
 Expected: clean on this platform (on Windows the `unix` module is compiled out; the pure parts carry the `allow(dead_code)` from the module declaration).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/wireguard.rs src/main.rs
@@ -1089,7 +1089,7 @@ git commit -m "feat(wireguard): the WG_* contract, ip + wg bring-up over stdin, 
 - Consumes: `heartbeat::{check, write, logs_dir, APP_FILE, TUNNEL_FILE, DEFAULT_MAX_AGE_SECS}`, `ping::{Ping, Kind, agent, send}`, `wireguard::{Tunnel, Assessor, SECRET_VARS}`, `prepare::NONROOT`.
 - Produces: `pub struct Plan { pub exe: PathBuf, pub app_root: PathBuf, pub tunnel: Option<(wireguard::Tunnel, u64 /*stale_secs*/)>, pub poll_secs: u64, pub ping: Option<Ping> }` and `pub fn run(plan: Plan) -> Result<u8>` (the exit code to end the process with).
 
-- [ ] **Step 1: Write the failing unit test for the adjudication**
+- [x] **Step 1: Write the failing unit test for the adjudication**
 
 The supervisor's loop is verified by the smoke test; its one pure piece, the ping decision, gets a unit test. Create `src/supervisor.rs`:
 
@@ -1118,12 +1118,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test supervisor`
 Expected: compile error, `Pinger` not found. (`Pinger` is pure and lives above the `#[cfg(unix)]` inner module, so this test runs on Windows too; only the loop is Unix-only.)
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```rust
 use std::path::PathBuf;
@@ -1341,12 +1341,12 @@ mod unix {
 
 Add `#[cfg_attr(not(unix), allow(dead_code))] mod supervisor;` to `main.rs`. Run `cargo build` on Linux (or WSL); on Windows `cargo build` must still pass with the `unix` submodule compiled out.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cargo test supervisor`
 Expected: 1 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/supervisor.rs src/main.rs
@@ -1365,7 +1365,7 @@ git commit -m "feat(supervisor): spawn as 999, forward signals, reap, poll the t
 **Interfaces:**
 - Produces: `run::run(args: &RunArgs) -> Result<u8>` (exit code; the exec path never returns `Ok`).
 
-- [ ] **Step 1: Restructure `run`**
+- [x] **Step 1: Restructure `run`**
 
 Replace the body of `run::run` after the mount check with:
 
@@ -1429,7 +1429,7 @@ Replace the body of `run::run` after the mount check with:
 
 Change the signature to `pub fn run(args: &RunArgs) -> Result<u8>`, add `use crate::{heartbeat, mounts, ping, prepare, pyproject, supervisor, wireguard};`, and update the module doc. In `main.rs`, make the `Run` arm on Unix `return match run::run(&…) { Ok(code) => ExitCode::from(code), Err(e) => { eprintln!("error: {e:#}"); ExitCode::from(1) } }` (the exec path only ever returns `Err`).
 
-- [ ] **Step 2: Extend the root-only binary test**
+- [x] **Step 2: Extend the root-only binary test**
 
 In `tests/entrypoint.rs`'s `as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs`, before the successful run, plant a leftover and assert it is gone afterwards:
 
@@ -1443,7 +1443,7 @@ In `tests/entrypoint.rs`'s `as_root_checks_mounts_prepares_dirs_drops_privileges
 Run: `cargo build && cargo clippy --all-targets -- -D warnings && cargo test --test entrypoint`
 Expected: clean; the root-only test stays `#[ignore]` (runs under `sudo` on Linux: `sudo -E cargo test --test entrypoint -- --ignored`), the others pass.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/run.rs src/main.rs tests/entrypoint.rs
@@ -1461,7 +1461,7 @@ git commit -m "feat(run): branch to the supervisor when supervise or wireguard i
 - Modify: `README.md`
 - Modify: `.github/workflows/ci.yml` (the wheel job's assertion checks both files ship)
 
-- [ ] **Step 1: The compose template**
+- [x] **Step 1: The compose template**
 
 Create `python/devkit_container/compose.template.yaml`:
 
@@ -1554,7 +1554,7 @@ networks:
     external: true
 ```
 
-- [ ] **Step 2: The Dockerfile block**
+- [x] **Step 2: The Dockerfile block**
 
 In `template.Dockerfile`, after the `useradd` `RUN` in the final stage add:
 
@@ -1566,7 +1566,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools
 # !end
 ```
 
-- [ ] **Step 3: The README and the wheel assertion**
+- [x] **Step 3: The README and the wheel assertion**
 
 In `README.md`:
 - **Subcommands**: add `healthcheck` (the paragraph from spec 7: files only, `--file` repeatable, `--max-age`, exit codes, reasons on stderr, bare timestamps as container-local time) and extend `run` with the branch: `supervise`/`wireguard` spawn and supervise (signals forwarded, zombies reaped, exit code passed through, `DEVKIT_SUPERVISED_PING`, the secrets scrubbed), the tunnel steps, the poll, the tunnel heartbeat, the ping (URL rules, `/start`/`/fail`, in-process over TLS with Mozilla's roots), the no-ping log line.
@@ -1578,7 +1578,7 @@ In `README.md`:
 
 In `.github/workflows/ci.yml`, extend the wheel job's Python assertion to `assert {'devkit_container/template.Dockerfile', 'devkit_container/compose.template.yaml'} <= set(names), names` and its step name to mention both files. In `__init__.py` add the compose template to the docstring.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add python/devkit_container README.md .github/workflows/ci.yml
@@ -1593,7 +1593,7 @@ git commit -m "feat(templates): the compose template with rule annotations and t
 - Create: `ci/render.sh`
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: The render script**
+- [x] **Step 1: The render script**
 
 Create `ci/render.sh`:
 
@@ -1635,14 +1635,14 @@ done
 
 Run it locally (`bash ci/render.sh`) once aeth-devkit 15 and devkit-templates 1.2 are released; until then it fails at `setup-project` with the old marker syntax and that is expected. Note in the commit message that the check is live after those releases.
 
-- [ ] **Step 2: The CI jobs**
+- [x] **Step 2: The CI jobs**
 
 In `.github/workflows/ci.yml`:
 - add a job `render` named `"Render: both modes of a scratch Docker project through the released devkit"` on `ubuntu-latest` with checkout, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `astral-sh/setup-uv@v5` (python 3.14), then a step `bash ci/render.sh` named `ci/render.sh: setup-project into a scratch project with the mode off and on, then scan docker/ for leftovers`;
 - in `container-smoke`, delete the `targets: x86_64-unknown-linux-musl` line under `dtolnay/rust-toolchain@stable` (the wheel is built in the maturin container since Task 1);
 - in `container-smoke`, before the test step add `- name: sudo modprobe wireguard\n  run: sudo modprobe wireguard`, and change the test step to run both smoke tests: `cargo test --test docker_smoke --test docker_supervisor -- --ignored --nocapture` (the second file lands in Task 10).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add ci/render.sh .github/workflows/ci.yml
@@ -1661,7 +1661,7 @@ git commit -m "ci: render both modes through the released devkit; load the wireg
 **Interfaces:**
 - Produces in `tests/common/mod.rs`: `pub fn root() -> PathBuf`, `pub fn ok(cmd: &mut Command) -> Output`, `pub fn text(out: &Output) -> String`, `pub fn write(root, rel, content)`, `pub struct Cleanup { pub image: String, pub volume: String, pub containers: Vec<String>, pub network: Option<String> }` (drop removes all), `pub fn build_wheel(root, out) -> PathBuf`, `pub fn scratch_repo(work, wheel, app: &str, pyproject_tail: &str) -> PathBuf`, `pub fn dockerfile(root, wheel_name, wireguard: bool) -> String`, `pub fn docker(args) -> Command`, `pub fn build_image(work, root, app, pyproject_tail, wireguard, tag) -> String` (wheel + scratch + build; returns the wheel name).
 
-- [ ] **Step 1: Extract the helpers**
+- [x] **Step 1: Extract the helpers**
 
 Move `root`, `ok`, `text`, `write`, `Cleanup`, `APP` (renamed `REPORT_APP`), `WHEEL_DIR`, `PYPROJECT`, `scratch_repo`, `build_wheel`, `dockerfile`, `docker` from `tests/docker_smoke.rs` into `tests/common/mod.rs` as `pub`, with these changes:
 - `PYPROJECT` ends at `required_persisted_dirs = […]` and gains a `{tail}` placeholder on the next line; `scratch_repo(work, wheel, app, pyproject_tail)` substitutes `{tail}` and writes `app` as the package source.
@@ -1688,7 +1688,7 @@ Then `tests/docker_smoke.rs` becomes `mod common; use common::*;` plus the exist
 Run: `cargo test --test docker_smoke -- --ignored --nocapture` (needs Docker; on the Windows dev machine this works as today)
 Expected: green.
 
-- [ ] **Step 2: The serving app and the new test**
+- [x] **Step 2: The serving app and the new test**
 
 Create `tests/docker_supervisor.rs`:
 
@@ -1921,7 +1921,7 @@ fn exec_ok(container: &str, args: &[&str]) -> std::process::Output {
 
 Add `serde_json` to `[dev-dependencies]` if not present (it is). `build_image` in `common` does: `build_wheel`, `scratch_repo(work, &wheel, app, pyproject_tail)`, copies the wheel into the context, writes `dockerfile(root, &wheel_name, wireguard)`, and `docker build --build-arg GIT_TAG=v0.1.0 --build-arg GIT_REPO=file:///tmp/scratch.git -t <tag> <context>`.
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 On a Linux host or CI (`sudo modprobe wireguard` first):
 
@@ -1931,7 +1931,7 @@ cargo test --test docker_supervisor -- --ignored --nocapture
 
 Expected: green. Iterate on the supervisor and tunnel code until every assertion holds; the usual first failures are the handshake wait (check `docker logs hub` for the `wg set` line failing) and the reap loop (an `ECHILD` from `waitpid(-1)` when no child exists is the `Err(_) => break` arm).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/common/mod.rs tests/docker_smoke.rs tests/docker_supervisor.rs Cargo.toml Cargo.lock
@@ -1945,7 +1945,7 @@ git commit -m "test(smoke): the supervisor with and without a tunnel, the health
 **Files:**
 - Modify: `todo.md` (delete the healthcheck entry: it ships here)
 
-- [ ] **Step 1: Everything once**
+- [x] **Step 1: Everything once**
 
 ```bash
 cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
@@ -1955,7 +1955,7 @@ bash ci/render.sh                                                               
 
 Expected: all green. Delete the healthcheck entry from `todo.md`.
 
-- [ ] **Step 2: PR and merge**
+- [x] **Step 2: PR and merge**
 
 ```bash
 git push -u origin supervisor-wireguard
