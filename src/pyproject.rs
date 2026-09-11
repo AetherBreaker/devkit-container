@@ -93,6 +93,39 @@ pub fn required_persisted_dirs(doc: &DocumentMut) -> Result<Vec<String>> {
   Ok(out)
 }
 
+/// `[tool.docker].<key>` as a boolean, `false` when absent; anything else is an error naming
+/// the key, so a misspelt value cannot read as "off".
+fn docker_flag(doc: &DocumentMut, key: &str) -> Result<bool> {
+  match doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) {
+    None => Ok(false),
+    Some(item) => item
+      .as_bool()
+      .with_context(|| format!("[tool.docker].{key} must be true or false, got {}", item.to_string().trim())),
+  }
+}
+
+/// `[tool.docker].supervise`: spawn and supervise the app instead of exec'ing it (spec 4).
+pub fn supervise(doc: &DocumentMut) -> Result<bool> {
+  docker_flag(doc, "supervise")
+}
+
+/// `[tool.docker].wireguard`: bring up the tunnel before the app; implies `supervise`.
+pub fn wireguard(doc: &DocumentMut) -> Result<bool> {
+  docker_flag(doc, "wireguard")
+}
+
+/// `[tool.docker].services` as strings (the slug fallback in `ping`); empty when absent or
+/// malformed, since the binary does not own that key's validation.
+pub fn services(doc: &DocumentMut) -> Vec<String> {
+  doc
+    .get("tool")
+    .and_then(|t| t.get("docker"))
+    .and_then(|d| d.get("services"))
+    .and_then(|s| s.as_array())
+    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -140,5 +173,40 @@ mod tests {
     assert!(legacy.contains("chown_paths"), "{legacy}");
     let both = doc("[tool.docker]\nrequired_persisted_dirs = [\"persisted_data\"]\nmkdirs = [\"x\"]\n");
     assert!(required_persisted_dirs(&both).unwrap_err().to_string().contains("mkdirs"));
+  }
+
+  #[test]
+  fn the_switches_are_booleans_off_by_default() {
+    let d = doc(
+      "[tool.docker]
+services = [\"a\", \"b\"]
+",
+    );
+    assert!(!supervise(&d).unwrap() && !wireguard(&d).unwrap());
+    assert_eq!(services(&d), ["a", "b"]);
+    let d = doc(
+      "[tool.docker]
+supervise = true
+wireguard = true
+",
+    );
+    assert!(supervise(&d).unwrap() && wireguard(&d).unwrap());
+    assert!(services(&d).is_empty());
+    assert!(
+      !supervise(&doc(
+        "[project]
+"
+      ))
+      .unwrap()
+    );
+    for bad in ["supervise = \"yes\"", "wireguard = 1"] {
+      let d = doc(&format!(
+        "[tool.docker]
+{bad}
+"
+      ));
+      let err = supervise(&d).and(wireguard(&d)).unwrap_err().to_string();
+      assert!(err.contains("must be true or false"), "{bad}: {err}");
+    }
   }
 }
