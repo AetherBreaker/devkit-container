@@ -12,7 +12,6 @@
 
 ## Global Constraints
 
-- Everything Python runs under `uv run`; `uv add`/`uv remove`/`uv lock` are refused by the project hooks.
 - `aeth_ext` changes land on a branch with a PR opened; nothing is merged or released there by this plan (owner's call).
 - The contract names are fixed by the spec and the container: `HEARTBEAT_SLUG`, `DEVKIT_SUPERVISED_PING` (any non-empty value means set).
 - Commit messages: Conventional Commits with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
@@ -26,7 +25,7 @@
 - Delete: `python/devkit_templates/templates/docker/compose.template.yaml`
 - Modify: `README.md` (the file list no longer names the compose scaffold)
 
-- [ ] **Step 1: Confirm the container release carries the template**
+- [x] **Step 1: Confirm the container release carries the template**
 
 ```bash
 cd "/d/SFT Software Projects/devkit-container" && uv sync && uv run python -c "import devkit_container, os; d=os.path.dirname(devkit_container.__file__); print(sorted(os.listdir(d)))"
@@ -34,7 +33,7 @@ cd "/d/SFT Software Projects/devkit-container" && uv sync && uv run python -c "i
 
 Expected: the listing includes `compose.template.yaml` and `template.Dockerfile`, and `uv run devkit-container --version` prints the container plan's release (2.0.0 or later). If it does not, stop: this plan runs after that release.
 
-- [ ] **Step 2: Delete the template, fix the README, verify the render**
+- [x] **Step 2: Delete the template, fix the README, verify the render**
 
 ```bash
 cd "/d/SFT Software Projects/devkit-templates" && git switch main && git pull && git switch -c drop-compose-template
@@ -51,7 +50,7 @@ bash ci/render.sh docker aeth-devkit
 
 Expected: `render ok: docker …`; the scratch project's `docker/compose.yaml` exists (from the container package) with `HEARTBEAT_SLUG=scratch-app` under `environment`.
 
-- [ ] **Step 3: Commit, PR, merge, release**
+- [x] **Step 3: Commit, PR, merge, release**
 
 ```bash
 git commit -am "chore(templates): the compose template ships in devkit-container now"
@@ -78,7 +77,7 @@ Merge when green, then `git switch main && git pull && uv sync && uv run devkit 
 **Interfaces:**
 - Produces: `scaffold::load(ctx, venv, gates) -> Result<Scaffold>` (no `templates_dir`); `docker::apply(ctx, deps, gates, changes)` and `docker::compose(ctx, venv, runner, consent, gates, changes)` lose the `templates_dir` parameter; `lib.rs`'s call site follows.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `tests/docker.rs`, replace `the_templates_copy_is_the_fallback_without_a_container_compose_template` with:
 
@@ -113,7 +112,7 @@ fn a_container_package_without_the_compose_template_is_refused_with_the_version_
 Run: `cargo test -p aeth-devkit-setup --test docker a_container_package_without`
 Expected: FAIL (today the templates copy is used and the run succeeds).
 
-- [ ] **Step 2: Remove the fallback**
+- [x] **Step 2: Remove the fallback**
 
 In `scaffold.rs`, `load` becomes:
 
@@ -140,7 +139,7 @@ Remove the `templates_dir` parameter from `docker::apply`, `docker::compose` and
 Run: `cargo test -p aeth-devkit-setup --test docker && cargo test -p aeth-devkit-setup --test apply && cargo clippy --all-targets -- -D warnings`
 Expected: green.
 
-- [ ] **Step 3: Commit, PR, merge, release**
+- [x] **Step 3: Commit, PR, merge, release**
 
 ```bash
 git switch -c drop-compose-fallback   # from an up-to-date main
@@ -167,13 +166,13 @@ Merge when green, then `uv run devkit release patch "the compose scaffold comes 
 **Interfaces:**
 - Produces: `_auto_slug(caller_file)` prefers `os.environ["HEARTBEAT_SLUG"]`; `_run_heartbeat_async` and `HeartbeatThread.run` skip the ping (keep the file write) when `DEVKIT_SUPERVISED_PING` is set; `send_heartbeat(..., failure=True)` unchanged.
 
-- [ ] **Step 1: Branch**
+- [x] **Step 1: Branch**
 
 ```bash
 cd "/d/SFT Software Projects/aeth_ext" && git switch main && git pull && uv sync && git switch -c heartbeat-under-supervisor
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `tests/monitoring/test_heartbeat.py`, at module level after the existing classes:
 
@@ -263,12 +262,12 @@ class TestUnderASupervisor:
 
 Add `import contextlib` to the file's standard-library imports. Check how the existing tests reset `SHUTDOWN` between tests (a fixture in `tests/conftest.py`, or a `SHUTDOWN.clear()` in each test); do the same here so `SHUTDOWN.set()` in one test does not stop the next.
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/monitoring/test_heartbeat.py -q -k "SlugFromEnvironment or UnderASupervisor"`
 Expected: the env-slug and stand-down tests fail; `test_an_explicit_slug_argument_still_wins`, `test_a_known_failure_is_still_the_apps_to_send` and `test_without_the_variable_the_app_pings_as_before` already pass (they pin behaviour that must not change).
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 In `heartbeat.py`:
 
@@ -327,12 +326,12 @@ def _supervised() -> bool:
 
 and the thread's equivalent with `_send_heartbeat(self._heartbeat_file, ping_url=None if _supervised() else self._ping_url, pingkey=None if _supervised() else self._pingkey, …)`. `_send_heartbeat` then writes the file and `ping_healthcheck(None, …)` is its documented no-op. `send_heartbeat` / `send_heartbeat_async` (the one-shot and `failure=True` paths) are untouched.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/monitoring/test_heartbeat.py -q`
 Expected: the whole file passes, the new tests included.
 
-- [ ] **Step 6: Lint, type-check, commit, push, open the PR (do not merge)**
+- [x] **Step 6: Lint, type-check, commit, push, open the PR (do not merge)**
 
 ```bash
 uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src
@@ -363,3 +362,36 @@ Expected: the PR URL. Stop here; the branch and PR are the deliverable.
 **Placeholders.** None. The one instruction that depends on reading existing code (how `SHUTDOWN` is reset between tests) says what to look for and what to do in either case.
 
 **Type consistency.** `scaffold::load(ctx, venv, gates)` (no templates dir) matches the `docker::apply`/`compose` signatures Task 2 changes together, and the `Installed`/`StubVenv` shapes used in the test are the ones `tests/docker.rs` already imports. `_auto_slug` keeps its `(caller_file: str) -> str | None` signature and `@cache`, which is why the tests call `cache_clear()`.
+
+---
+
+## Execution notes (2026-09-11)
+
+- **Task 1, Step 2.** The rendered `docker/compose.yaml` has no `HEARTBEAT_SLUG` line: the
+  container package's template gates the whole `environment` block on `dep("aeth-ext")`,
+  `supervise` or `wireguard`, none of which the scratch project has. The render came from the
+  container package regardless (the binary `healthcheck` proves it; this tree has no copy left),
+  which is what the step verifies.
+- **Task 1, Step 2 / CI.** PR #2's floor job (devkit 15.0.0) failed on the sweep-order bug 15.0.1
+  fixed: the scratch project adopts devkit-container 2.0.0 mid-run and 15.0.0 never sweeps its
+  gated Dockerfile. Owner's decision: raise the floor to `aeth-devkit>=15.0.1` in the same PR.
+- **Task 2, Step 2.** The plan's `load` errors when the container package is absent, while its
+  prose expected the run to go on with a note. Owner's decision: the error stands (a plain run
+  installs the package when a service is listed; a run that still lacks it is wrong). Five tests
+  that ran the real binary or `cli::run` on a Docker project with no real venv followed:
+  `without_the_container_package_the_dockerfile_is_skipped_with_a_note` became
+  `without_the_container_package_a_dry_run_is_refused_naming_the_plain_run`; three stdin /
+  templates-dir tests use a project without a Docker service (`make_project_without_docker`);
+  the compose-shape test keeps its `error:` assertions in-process and the exit-code mapping moved
+  to `a_recorded_error_exits_1_and_a_clean_dry_run_0`, driven by the stale-lock error.
+- **Task 3, Steps 2 and 4.** The existing suite never sets the real `SHUTDOWN` (it is one-shot;
+  `tests/conftest.py` asserts it stays clear), so the new thread tests patch in an
+  `aiologic.Event` as the neighbouring tests do, and the async one uses the file's
+  `_run_briefly`. The plan's stand-down tests asserted `ping_healthcheck` was never called, while
+  its implementation passes the URL as `None` (the documented no-op); the implementation stands
+  and the tests assert that no ping carried a URL.
+- **Task 2, Step 3 / CI.** aeth-devkit's Templates job dry-runs a Docker scratch project with no
+  venv, which the refusal above now stops; the job creates a venv for that project and installs
+  the released devkit-container into it first (the index is readable anonymously in CI).
+- **Releases.** devkit-templates 1.2.1, aeth-devkit 15.0.2; aeth_ext PR #22 open, unmerged, its
+  tests green on both platforms.
