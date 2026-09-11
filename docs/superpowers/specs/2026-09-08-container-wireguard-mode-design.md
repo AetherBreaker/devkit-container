@@ -493,7 +493,7 @@ healthchecks.io: `/start` once, plain while healthy, `/fail` on the stale transi
   and a small dependency tree. `rustpython-vm` (a full interpreter, sixty-plus crates, tens of
   megabytes) is the fallback behind the seam if the subset ever bites.
 - **`keys` is a function taking the dotted path, not attribute access and not a dict.** Dot
-  access (`keys("tool.docker.wireguard")`) needs an object whose missing attributes are falsy and
+  access (`keys.tool.docker.wireguard`) needs an object whose missing attributes are falsy and
   chainable; Monty's sandbox classes dispatch no `__getattr__` and its instances are always
   truthy, so on Monty that syntax is only possible as a textual rewrite with its own rules, which
   stops the gate text being Python. The `tomllib` dict shape is Python but makes every optional
