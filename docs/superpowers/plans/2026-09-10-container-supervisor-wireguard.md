@@ -1978,13 +1978,34 @@ uv run devkit release major "supervisor, wireguard mode, healthcheck subcommand,
 
 Needs the SFTPyPI credentials in `.env`; if absent, report that the owner runs this step. Major: the compose file every project renders changes shape (the healthcheck line), and `run` gains behaviour.
 
-- [ ] **Step 4: Prove it in `ScheduledReportAggregator` (spec 13)**
+- [x] **Step 4: Prove it in `ScheduledReportAggregator` (spec 13)**
 
 ```bash
 cd "/d/SFT Software Projects/ScheduledReportAggregator" && uv run poe lock && uv run poe setup-project --no-vscode
 ```
 
 Expected: the run advances `devkit-container`, replaces `docker/Dockerfile` (no wireguard block: the mode is off), and edits `docker/compose.yaml`: `HEARTBEAT_SLUG=scheduled-report-aggregator` added under `environment`, `healthcheck.test` set to the binary form, nothing else. Then set `[tool.docker].wireguard = true`, commit, rerun: the diff adds exactly the `WG_*` lines, `cap_add`, the two-file healthcheck and `start_period: 90s`, and the Dockerfile gains the `wireguard-tools` line. Revert or keep as the owner decides; the first-deploy checks are the companion spec's.
+
+---
+
+## Execution notes (2026-09-11)
+
+- Task 9: the render check is a `--dry-run` parse check, not the plain run written above. A
+  plain run's pyproject merge rewrote the scratch project's `path` source to the index and
+  the package step advanced devkit-container, so it rendered the released templates, not the
+  checkout's. A dry run advances nothing; it writes no files either, so the content checks
+  live in the smoke tests. A versatile testing-only render surface is on aeth-devkit's TODO.
+- Task 10: the wireguard smoke test's stale window is 150 s (WireGuard advances
+  `latest-handshakes` only on a rekey, every 120 s; 4 s flaps a healthy tunnel), its
+  healthcheck passes `--max-age 10`, `/fail` is awaited before the peer is restored (the
+  tunnel file goes stale a full window after the supervisor stops writing it), the test app
+  writes its heartbeat atomically, and the supervised app is asserted to have no
+  supplementary groups.
+- Task 11 step 4 found an aeth-devkit bug: the gate sweep ran before the package step, so a
+  run that installs or advances devkit-container rendered its templates unswept. Fixed in
+  aeth-devkit 15.0.1 (`Gates::extend` after the package step, against the same pyproject
+  document). ScheduledReportAggregator then rendered both modes exactly as written above;
+  its working tree holds the mode-off result uncommitted for the owner to keep or revert.
 
 ---
 
