@@ -29,6 +29,44 @@ fn query_subcommands_print_without_trailing_newline() {
   assert_eq!(String::from_utf8_lossy(&out.stdout), "README.md");
 }
 
+#[test]
+fn healthcheck_reads_files_only_and_says_why_it_fails() {
+  let dir = tempfile::tempdir().unwrap();
+  let root = dir.path();
+  let logs = root.join("persisted_data").join("logs");
+  std::fs::create_dir_all(&logs).unwrap();
+  // Default: the app's file under --app-root, max age 180.
+  let out = bin().args(["healthcheck", "--app-root"]).arg(root).output().unwrap();
+  assert_eq!(out.status.code(), Some(1));
+  let err = String::from_utf8_lossy(&out.stderr);
+  assert!(err.contains("heartbeat.txt") && err.contains("missing"), "{err}");
+  let now = jiff::Timestamp::now();
+  std::fs::write(logs.join("heartbeat.txt"), now.to_string()).unwrap();
+  let out = bin().args(["healthcheck", "--app-root"]).arg(root).output().unwrap();
+  assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+  // Two files, one stale: exit 1, one reason line, naming the stale one only.
+  let old = now.checked_sub(jiff::Span::new().seconds(400)).unwrap();
+  std::fs::write(logs.join("wireguard-heartbeat.txt"), old.to_string()).unwrap();
+  let out = bin()
+    .args(["healthcheck", "--file"])
+    .arg(logs.join("heartbeat.txt"))
+    .arg("--file")
+    .arg(logs.join("wireguard-heartbeat.txt"))
+    .output()
+    .unwrap();
+  assert_eq!(out.status.code(), Some(1));
+  let err = String::from_utf8_lossy(&out.stderr);
+  assert_eq!(err.lines().count(), 1, "{err}");
+  assert!(err.contains("wireguard-heartbeat.txt") && err.contains("stale by"), "{err}");
+  // --max-age widens it.
+  let out = bin()
+    .args(["healthcheck", "--max-age", "1000", "--file"])
+    .arg(logs.join("wireguard-heartbeat.txt"))
+    .output()
+    .unwrap();
+  assert!(out.status.success());
+}
+
 #[cfg(not(unix))]
 #[test]
 fn run_is_unsupported_off_unix() {
