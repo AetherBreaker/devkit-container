@@ -95,6 +95,7 @@ pub fn required_persisted_dirs(doc: &DocumentMut) -> Result<Vec<String>> {
 
 /// `[tool.docker].<key>` as a boolean, `false` when absent; anything else is an error naming
 /// the key, so a misspelt value cannot read as "off".
+#[cfg_attr(not(unix), allow(dead_code))] // only `run` (Unix) calls the switches
 fn docker_flag(doc: &DocumentMut, key: &str) -> Result<bool> {
   match doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) {
     None => Ok(false),
@@ -105,17 +106,20 @@ fn docker_flag(doc: &DocumentMut, key: &str) -> Result<bool> {
 }
 
 /// `[tool.docker].supervise`: spawn and supervise the app instead of exec'ing it (spec 4).
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn supervise(doc: &DocumentMut) -> Result<bool> {
   docker_flag(doc, "supervise")
 }
 
 /// `[tool.docker].wireguard`: bring up the tunnel before the app; implies `supervise`.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn wireguard(doc: &DocumentMut) -> Result<bool> {
   docker_flag(doc, "wireguard")
 }
 
 /// `[tool.docker].services` as strings (the slug fallback in `ping`); empty when absent or
 /// malformed, since the binary does not own that key's validation.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn services(doc: &DocumentMut) -> Vec<String> {
   doc
     .get("tool")

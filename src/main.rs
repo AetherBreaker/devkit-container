@@ -4,6 +4,7 @@
 // Off Unix only the query subcommands exist, so the entrypoint's helpers would be flagged
 // as dead code there; the attribute keeps the Windows build warning-free.
 mod healthcheck;
+#[cfg_attr(not(unix), allow(dead_code))] // `write` and the tunnel file serve the supervisor (Unix)
 mod heartbeat;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod mounts;
@@ -88,11 +89,19 @@ fn main() -> ExitCode {
       pyproject,
       app_root,
       mountinfo,
-    } => run::run(&run::RunArgs {
-      pyproject,
-      app_root,
-      mountinfo,
-    }),
+    } => {
+      return match run::run(&run::RunArgs {
+        pyproject,
+        app_root,
+        mountinfo,
+      }) {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+          eprintln!("error: {e:#}");
+          ExitCode::from(1)
+        }
+      };
+    }
     #[cfg(not(unix))]
     Command::Run { .. } => Err(anyhow::anyhow!("unsupported platform: `run` is the Linux container entrypoint")),
   };

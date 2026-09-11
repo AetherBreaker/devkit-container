@@ -133,6 +133,8 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
     "nothing created before the mount check passes"
   );
 
+  std::fs::create_dir_all(root.join("persisted_data/logs")).unwrap();
+  std::fs::write(root.join("persisted_data/logs/wireguard-heartbeat.txt"), "2020-01-01T00:00:00Z").unwrap();
   let mounted = root.join("mountinfo-ok");
   std::fs::write(
     &mounted,
@@ -150,6 +152,10 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
     .unwrap();
   assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
   assert_eq!(std::fs::read_to_string(root.join("persisted_data/uid.txt")).unwrap().trim(), "999");
+  assert!(
+    !root.join("persisted_data/logs/wireguard-heartbeat.txt").exists(),
+    "a leftover tunnel beat is removed with the mode off"
+  );
   let meta = std::fs::metadata(root.join("persisted_data")).unwrap();
   assert_eq!(std::os::unix::fs::MetadataExt::uid(&meta), 999);
 }
