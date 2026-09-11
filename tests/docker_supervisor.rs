@@ -60,24 +60,8 @@ fn wait_for(what: &str, timeout: Duration, containers: &[&str], mut probe: impl 
   let deadline = Instant::now() + timeout;
   while !probe() {
     if Instant::now() >= deadline {
-      let dump: Vec<String> = containers
-        .iter()
-        .map(|c| {
-          format!(
-            "--- docker logs {c}
-{}",
-            logs(c)
-          )
-        })
-        .collect();
-      panic!(
-        "timed out waiting for {what}
-{}",
-        dump.join(
-          "
-"
-        )
-      );
+      let dump: Vec<String> = containers.iter().map(|c| format!("--- docker logs {c}\n{}", logs(c))).collect();
+      panic!("timed out waiting for {what}\n{}", dump.join("\n"));
     }
     std::thread::sleep(Duration::from_secs(1));
   }
