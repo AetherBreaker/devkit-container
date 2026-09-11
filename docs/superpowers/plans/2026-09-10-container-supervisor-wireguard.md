@@ -4,9 +4,9 @@
 
 **Goal:** Give `devkit-container` the `supervise` and `wireguard` switches, a supervising entrypoint, the WireGuard tunnel, the `healthcheck` subcommand over heartbeat files, the healthchecks.io ping, the compose template as package data, and the gated Dockerfile block; then release it.
 
-**Architecture:** `run` keeps its checks and grows one branch: exec (today) or supervise. Four new modules: `heartbeat` (timestamp files: parse, freshness, atomic write), `healthcheck` (the subcommand), `ping` (URL building; the request goes through the venv's Python as uid 999), `wireguard` (shell-outs to `ip`/`wg`, a pure stale-and-re-up state machine), `supervisor` (spawn as 999, reap, forward signals, the poll loop that ties the other three together). The compose template joins `template.Dockerfile` in the `devkit_container` package; both carry `# !` gates on `keys("tool.docker.wireguard")` and the compose one carries `# !rule` annotations.
+**Architecture:** `run` keeps its checks and grows one branch: exec (today) or supervise. Four new modules: `heartbeat` (timestamp files: parse, freshness, atomic write), `healthcheck` (the subcommand), `ping` (URL building; the request itself through `ureq`, on a thread so the loop never waits on the network), `wireguard` (shell-outs to `ip`/`wg`, a pure stale-and-re-up state machine), `supervisor` (spawn as 999, reap, forward signals, the poll loop that ties the other three together). The compose template joins `template.Dockerfile` in the `devkit_container` package; both carry `# !` gates on `keys("tool.docker.wireguard")` and the compose one carries `# !rule` annotations.
 
-**Tech Stack:** Rust 2024, `clap`, `anyhow`, `toml_edit`, `nix` 0.31 (`user`, `signal`, `process`), `signal-hook` 0.4, `jiff` 0.2 (`tzdb-bundle-always`); Docker for the smoke tests; `wireguard-tools` and `iproute2` inside the image.
+**Tech Stack:** Rust 2024, `clap`, `anyhow`, `toml_edit`, `nix` 0.31 (`user`, `signal`, `process`), `signal-hook` 0.4, `jiff` 0.2 (`tzdb-bundle-always`), `ureq` 3 (`rustls` feature: rustls, `ring`, Mozilla's roots; Unix only); zig through maturin's `--zig` for the musl smoke wheel; Docker for the smoke tests; `wireguard-tools` and `iproute2` inside the image.
 
 **Spec:** `docs/superpowers/specs/2026-09-08-container-wireguard-mode-design.md`, sections 3 (the package-data half), 4 to 9 (this repo's parts), 10 (step 2), 11, 12 (this repo's paragraphs), 13, 14. Depends on the template-language plan's releases (aeth-devkit 15.0.0, devkit-templates 1.2.0) for the render check in Task 9 only; every other task builds and tests without them.
 
@@ -14,7 +14,7 @@
 
 - Run Python and tooling under `uv run`; `uv add`/`uv remove`/`uv lock` are refused by the project hook (use `uv sync`, `poe lock`).
 - `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` run on Windows and Linux in CI: every Unix-only item is behind `#[cfg(unix)]` and the Windows build stays warning-free (see the `cfg_attr(not(unix), allow(dead_code))` pattern in `main.rs`).
-- The smoke wheel is a static `x86_64-unknown-linux-musl` build cross-compiled from Windows with `rust-lld`: no crate that needs a C compiler (no `ring`, no `aws-lc`, no `openssl`). `jiff`, `signal-hook` and `nix` are pure Rust.
+- The smoke wheel is a static `x86_64-unknown-linux-musl` build cross-compiled through maturin's `--zig`: zig is the C compiler and the linker for the target, so `ring`'s C sources build from Windows with no C toolchain installed (verified on this checkout: a statically linked ELF, 28 s warm). `uv run --with ziglang` supplies zig without touching the lock; `CARGO_ZIGBUILD_PYTHON_PATH=python` lets maturin find it under `uv run` on Windows, which has no `python3`; the zig wrapper scripts split on spaces, so the build runs with a `CARGO_TARGET_DIR` whose path has none. `ureq` is a `cfg(unix)` dependency, so the Windows wheel never compiles `ring`; the manylinux release container has gcc.
 - Secrets never appear in argv, logs or error messages: `WG_PRIVATE_KEY`, `WG_PEER_PRESHARED_KEY`, `PINGKEY`, and any ping URL. Errors name the variable, never the value (spec 5).
 - Defaults, exactly (spec 6, 7): keepalive 25, handshake timeout 60 s, poll 30 s, stale 180 s, heartbeat max age 180 s; heartbeat files `/app/persisted_data/logs/heartbeat.txt` and `/app/persisted_data/logs/wireguard-heartbeat.txt` (relative to `--app-root` in tests).
 - Environment names, exactly: `WG_PRIVATE_KEY`, `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_PEER_ENDPOINT`, `WG_PEER_ALLOWED_IPS`, `WG_PEER_PRESHARED_KEY`, `WG_PERSISTENT_KEEPALIVE`, `WG_HANDSHAKE_TIMEOUT_SECS`, `WG_POLL_SECS`, `WG_STALE_SECS`, `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL`, `DEVKIT_SUPERVISED_PING`. Empty is unset.
@@ -48,15 +48,77 @@ In `Cargo.toml`:
   toml_edit = "0.25.13"
 
 # `nix` and `signal-hook` have no Windows build at all, so they must not even be resolved there.
+# `ureq` only serves the supervisor, which is Unix-only; listing it here keeps `ring`'s C sources
+# out of the Windows build.
 [target.'cfg(unix)'.dependencies]
   nix         = { version = "0.31.3", features = ["user", "signal", "process"] }
   signal-hook = "0.4"
+  ureq        = { version = "3.4", default-features = false, features = ["rustls"] }
 ```
 
 Run: `cargo build`
-Expected: `Finished` (on Windows `nix`/`signal-hook` are skipped).
+Expected: `Finished` (on Windows `nix`/`signal-hook`/`ureq` are skipped).
 
-- [ ] **Step 2: Write the failing tests**
+- [ ] **Step 2: Cross-compile the smoke wheel through zig**
+
+`ring` has C sources, so the musl cross-build now needs a C compiler for the target; zig is one, and maturin drives it with `--zig`. In `tests/docker_smoke.rs` replace `build_wheel` and its doc comment:
+
+```rust
+/// The wheel the image installs, built from this checkout for the image's platform. The
+/// binary is a static musl build so the same wheel serves a glibc image, and the platform
+/// tag is the generic `linux` one so uv accepts it there. zig compiles `ring`'s C and links
+/// the binary, on every host; a released wheel is manylinux, built in maturin's container.
+fn build_wheel(root: &Path, out: &Path) -> PathBuf {
+  let mut cmd = Command::new("uv");
+  cmd
+    .args(["run", "--with", "ziglang", "maturin", "build", "--release", "--target", MUSL])
+    .args(["--compatibility", "linux", "--zig", "--out"])
+    .arg(out)
+    .current_dir(root)
+    // maturin finds zig through `python -m ziglang`; under `uv run` that is the environment's
+    // python, and Windows has no `python3` for the default to find.
+    .env("CARGO_ZIGBUILD_PYTHON_PATH", "python");
+  // The zig wrapper scripts split on spaces, so a checkout under a path with one (this one:
+  // `D:\SFT Software Projects\...`) builds into the temp dir instead.
+  if std::env::var_os("CARGO_TARGET_DIR").is_none() && root.to_string_lossy().contains(' ') {
+    let dir = std::env::temp_dir().join("devkit-container-musl-target");
+    assert!(!dir.to_string_lossy().contains(' '), "set CARGO_TARGET_DIR to a path without spaces");
+    cmd.env("CARGO_TARGET_DIR", dir);
+  }
+  ok(&mut cmd);
+  let wheel = std::fs::read_dir(out)
+    .unwrap()
+    .flatten()
+    .map(|e| e.path())
+    .find(|p| p.extension().is_some_and(|x| x == "whl"))
+    .expect("maturin wrote a wheel");
+  let name = wheel.file_name().unwrap().to_string_lossy().into_owned();
+  assert!(
+    name.ends_with("linux_x86_64.whl"),
+    "the image needs the generic linux tag, got {name}"
+  );
+  wheel
+}
+```
+
+The `rust-lld` linker env and its comment go. Prove the build without Docker, from the repo root (Git Bash on Windows), with `TMP` a directory whose path has no spaces:
+
+```bash
+CARGO_TARGET_DIR="$TMP/musl-target" CARGO_ZIGBUILD_PYTHON_PATH=python \
+  uv run --with ziglang maturin build --release --target x86_64-unknown-linux-musl \
+  --compatibility linux --zig --out "$TMP/wheel"
+```
+
+Expected: `🛠️ Using zig for cross-compiling to x86_64-unknown-linux-musl`, then `📦 Built wheel to …/devkit_container-<version>-py3-none-linux_x86_64.whl` (the first run downloads the 94 MB ziglang wheel, which uv caches). `unzip -p "$TMP"/wheel/*.whl '*/scripts/devkit-container' | file -` reports a statically linked ELF.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Cargo.toml Cargo.lock tests/docker_smoke.rs
+git commit -m "chore(deps): jiff, signal-hook, ureq; the smoke wheel cross-compiles through zig for ring's C sources"
+```
+
+- [ ] **Step 4: Write the failing tests**
 
 In `src/pyproject.rs`'s test module add:
 
@@ -78,12 +140,12 @@ In `src/pyproject.rs`'s test module add:
   }
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [ ] **Step 5: Run the test to verify it fails**
 
 Run: `cargo test pyproject::tests::the_switches`
 Expected: compile error, functions not found.
 
-- [ ] **Step 4: Write the implementation**
+- [ ] **Step 6: Write the implementation**
 
 Add to `src/pyproject.rs`:
 
@@ -122,15 +184,15 @@ pub fn services(doc: &DocumentMut) -> Vec<String> {
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 7: Run the test to verify it passes**
 
 Run: `cargo test pyproject`
 Expected: all `pyproject` tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock src/pyproject.rs
+git add src/pyproject.rs
 git commit -m "feat(pyproject): read the supervise and wireguard switches"
 ```
 
@@ -476,8 +538,8 @@ git commit -m "feat(healthcheck): the subcommand that replaces the compose shell
   - `pub enum Kind { Start, Plain, Fail }`
   - `pub struct Ping { … }` with `pub fn configure(url: Option<&str>, pingkey: Option<&str>, slug: Option<&str>) -> Option<Ping>` and `pub fn url(&self, kind: Kind) -> String`
   - `pub fn slug(env_slug: Option<&str>, services: &[String]) -> Option<String>`
-  - `#[cfg(unix)] pub fn send(python: &Path, url: &str, body: &str, as_uid: Option<u32>) -> std::io::Result<std::process::Child>` (spawns; the caller reaps)
-  - `pub const PYTHON_SNIPPET: &str` (the `-c` program)
+  - `#[cfg(unix)] pub fn agent() -> ureq::Agent` (one per process; 10 s global timeout)
+  - `#[cfg(unix)] pub fn send(agent: &ureq::Agent, url: &str, body: &str) -> Result<(), String>` (blocking; GET without a body, POST with one; the error text never contains the URL)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -487,8 +549,8 @@ Create `src/ping.rs`:
 //! The healthchecks.io ping, in `aeth_ext.monitoring.ping`'s exact shape (spec 7): a fixed
 //! URL, else `https://hc-ping.com/<PINGKEY>/<HEARTBEAT_SLUG>` with `?create=1`; `/start`
 //! once, plain while healthy, `/fail` with a body on a stale transition or a bad exit. The
-//! request itself goes through the venv's Python as uid 999 with the URL on stdin, so no TLS
-//! stack enters the root process and the URL's secret never reaches argv.
+//! request is made in-process by `ureq` over rustls with Mozilla's roots, off the supervisor's
+//! thread; the URL carries the key, so it never reaches argv, logs or error text.
 
 #[cfg(test)]
 mod tests {
@@ -528,10 +590,13 @@ mod tests {
     assert_eq!(slug(None, &[]), None);
   }
 
+  #[cfg(unix)]
   #[test]
-  fn the_python_snippet_reads_the_url_and_body_from_stdin() {
-    assert!(PYTHON_SNIPPET.contains("sys.stdin.readline()") && PYTHON_SNIPPET.contains("timeout=10"));
-    assert!(!PYTHON_SNIPPET.contains("argv"), "the URL must never be an argument");
+  fn a_failed_request_reports_without_the_url() {
+    // Port 1 on loopback refuses at once, no network needed. The URL holds the key, so the
+    // text the supervisor logs must not echo it.
+    let err = send(&agent(), "http://127.0.0.1:1/secret-key/app", "").unwrap_err();
+    assert!(!err.contains("secret-key"), "{err}");
   }
 }
 ```
@@ -546,8 +611,6 @@ Expected: compile errors.
 Above the tests:
 
 ```rust
-use std::path::Path;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
   Start,
@@ -606,48 +669,41 @@ pub fn slug(env_slug: Option<&str>, services: &[String]) -> Option<String> {
   }
 }
 
-/// The request, as `aeth_ext` makes it: `urlopen` with a 10 s timeout, GET without a body,
-/// POST with one. The URL is the first stdin line; the rest of stdin is the body.
-pub const PYTHON_SNIPPET: &str = "import sys, urllib.request\n\
-url = sys.stdin.readline().strip()\n\
-body = sys.stdin.read().encode()\n\
-req = urllib.request.Request(url, data=body or None, method='POST' if body else 'GET')\n\
-urllib.request.urlopen(req, timeout=10).close()\n";
-
-/// Spawn the request through `python` (the venv's), as `as_uid` when the caller is root.
-/// The caller reaps the child; a nonzero exit is a failed ping, logged and never fatal.
+/// One agent for the process: the 10 s timeout `aeth_ext`'s `urlopen` uses, as a global bound.
 #[cfg(unix)]
-pub fn send(python: &Path, url: &str, body: &str, as_uid: Option<u32>) -> std::io::Result<std::process::Child> {
-  use std::io::Write as _;
-  use std::os::unix::process::CommandExt as _;
-  use std::process::{Command, Stdio};
-  let mut cmd = Command::new(python);
-  cmd.arg("-c").arg(PYTHON_SNIPPET).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-  if let Some(uid) = as_uid {
-    cmd.uid(uid).gid(uid);
-  }
-  let mut child = cmd.spawn()?;
-  if let Some(mut stdin) = child.stdin.take() {
-    // A short write; a closed pipe (python died at once) is reported by the exit status.
-    let _ = writeln!(stdin, "{url}");
-    let _ = stdin.write_all(body.as_bytes());
-  }
-  Ok(child)
+pub fn agent() -> ureq::Agent {
+  ureq::Agent::config_builder()
+    .timeout_global(Some(std::time::Duration::from_secs(10)))
+    .build()
+    .into()
+}
+
+/// The request, as `aeth_ext` makes it: GET without a body, POST with one; any non-2xx is a
+/// failure and the response body is never read. The error text is ureq's, which names hosts,
+/// status codes and timeouts but never the URL, so the caller may log it.
+#[cfg(unix)]
+pub fn send(agent: &ureq::Agent, url: &str, body: &str) -> Result<(), String> {
+  let result = if body.is_empty() {
+    agent.get(url).call()
+  } else {
+    agent.post(url).send(body)
+  };
+  result.map(drop).map_err(|e| e.to_string())
 }
 ```
 
-(`Command::uid`/`gid` set the child's ids before exec and clear supplementary groups the way `setgroups([])` does when the caller is root; the smoke test's `no_extra_groups` check covers the app child, which the supervisor spawns the same way.)
+(`ureq`'s `rustls` feature installs `ring` as the process's crypto provider itself, so no `CryptoProvider::install_default` call is needed; TLS 1.2 and 1.3, Mozilla's roots from `webpki-roots`.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test ping`
-Expected: 5 passed (on Windows too: `send` is `cfg(unix)`; add `#[cfg_attr(not(unix), allow(dead_code))]` on the module declaration in `main.rs` if the Windows build warns about unused items).
+Expected: 5 passed on Linux, 4 on Windows (`agent`, `send` and their test are `cfg(unix)`; add `#[cfg_attr(not(unix), allow(dead_code))]` on the module declaration in `main.rs` if the Windows build warns about unused items).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/ping.rs src/main.rs
-git commit -m "feat(ping): healthchecks.io URLs in aeth_ext's shape, sent through the venv's Python as 999"
+git commit -m "feat(ping): healthchecks.io URLs in aeth_ext's shape, sent with ureq over rustls"
 ```
 
 ---
@@ -1024,7 +1080,7 @@ git commit -m "feat(wireguard): the WG_* contract, ip + wg bring-up over stdin, 
 - Modify: `src/main.rs` (add `#[cfg(unix)] mod supervisor;`)
 
 **Interfaces:**
-- Consumes: `heartbeat::{check, write, logs_dir, APP_FILE, TUNNEL_FILE, DEFAULT_MAX_AGE_SECS}`, `ping::{Ping, Kind, send}`, `wireguard::{Tunnel, Assessor, SECRET_VARS}`, `prepare::NONROOT`.
+- Consumes: `heartbeat::{check, write, logs_dir, APP_FILE, TUNNEL_FILE, DEFAULT_MAX_AGE_SECS}`, `ping::{Ping, Kind, agent, send}`, `wireguard::{Tunnel, Assessor, SECRET_VARS}`, `prepare::NONROOT`.
 - Produces: `pub struct Plan { pub exe: PathBuf, pub app_root: PathBuf, pub tunnel: Option<(wireguard::Tunnel, u64 /*stale_secs*/)>, pub poll_secs: u64, pub ping: Option<Ping> }` and `pub fn run(plan: Plan) -> Result<u8>` (the exit code to end the process with).
 
 - [ ] **Step 1: Write the failing unit test for the adjudication**
@@ -1108,8 +1164,9 @@ pub use unix::run;
 #[cfg(unix)]
 mod unix {
   use std::os::unix::process::CommandExt as _;
-  use std::process::{Child, Command};
+  use std::process::Command;
   use std::sync::Arc;
+  use std::thread::JoinHandle;
   use std::sync::atomic::{AtomicBool, Ordering};
   use std::time::{Duration, Instant};
 
@@ -1176,19 +1233,28 @@ mod unix {
     let logs = heartbeat::logs_dir(&plan.app_root);
     let app_beat = logs.join(heartbeat::APP_FILE);
     let tunnel_beat = logs.join(heartbeat::TUNNEL_FILE);
-    let python = plan.app_root.join(".venv").join("bin").join("python");
+    let agent = ping::agent();
     let mut assessor = Assessor::new(stale_secs);
     let mut pinger = Pinger::default();
-    let mut pings: Vec<Child> = Vec::new();
+    let mut inflight: Option<JoinHandle<()>> = None;
     let mut next_poll = Instant::now();
     let exit_code: u8;
 
-    let send = |pings: &mut Vec<Child>, kind: Kind, body: &str| {
+    // Off the loop's thread: a slow host must not delay signal forwarding or reaping. One in
+    // flight at a time, bounded by the agent's 10 s timeout; a skipped plain ping is one
+    // missed beat, well inside the check's grace.
+    let send = |inflight: &mut Option<JoinHandle<()>>, kind: Kind, body: &str| {
       let Some(p) = &plan.ping else { return };
-      match ping::send(&python, &p.url(kind), body, spawner_is_root.then_some(NONROOT)) {
-        Ok(c) => pings.push(c),
-        Err(e) => eprintln!("devkit-container: ping {kind:?} could not start: {e}"),
+      if inflight.as_ref().is_some_and(|h| !h.is_finished()) {
+        eprintln!("devkit-container: ping {kind:?} skipped: the previous one is still in flight");
+        return;
       }
+      let (agent, url, body) = (agent.clone(), p.url(kind), body.to_string());
+      *inflight = Some(std::thread::spawn(move || {
+        if let Err(e) = ping::send(&agent, &url, &body) {
+          eprintln!("devkit-container: ping {kind:?} failed: {e}");
+        }
+      }));
     };
 
     loop {
@@ -1198,18 +1264,16 @@ mod unix {
           let _ = kill(child_pid, sig);
         }
       }
-      // Reap: the app child ends the loop; anything else (a ping) is a zombie to collect.
+      // Reap: the app child ends the loop; anything else is an orphan adopted as PID 1.
       let mut app_exit: Option<u8> = None;
       loop {
         match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
           Ok(WaitStatus::Exited(pid, code)) if pid == child_pid => app_exit = Some(code as u8),
           Ok(WaitStatus::Signaled(pid, sig, _)) if pid == child_pid => app_exit = Some(128u8.wrapping_add(sig as i32 as u8)),
-          Ok(WaitStatus::Exited(_, code)) if code != 0 => eprintln!("devkit-container: ping exited with {code}"),
           Ok(WaitStatus::StillAlive) | Err(_) => break,
           Ok(_) => {}
         }
       }
-      pings.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
       if let Some(code) = app_exit {
         exit_code = code;
         break;
@@ -1244,9 +1308,9 @@ mod unix {
         match pinger.decide(reasons.is_empty()) {
           Some(Kind::Fail) => {
             eprintln!("devkit-container: unhealthy: {}", reasons.join("; "));
-            send(&mut pings, Kind::Fail, &reasons.join("\n"));
+            send(&mut inflight, Kind::Fail, &reasons.join("\n"));
           }
-          Some(kind) => send(&mut pings, kind, ""),
+          Some(kind) => send(&mut inflight, kind, ""),
           None => {}
         }
       }
@@ -1258,11 +1322,11 @@ mod unix {
     }
     if exit_code != 0 {
       eprintln!("devkit-container: app exited with {exit_code}");
-      send(&mut pings, Kind::Fail, &format!("exit code {exit_code}"));
+      send(&mut inflight, Kind::Fail, &format!("exit code {exit_code}"));
     }
     // The container ends with this process; give the last ping its chance to leave.
-    for mut c in pings {
-      let _ = c.wait();
+    if let Some(h) = inflight {
+      let _ = h.join();
     }
     Ok(exit_code)
   }
@@ -1499,7 +1563,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools
 - [ ] **Step 3: The README and the wheel assertion**
 
 In `README.md`:
-- **Subcommands**: add `healthcheck` (the paragraph from spec 7: files only, `--file` repeatable, `--max-age`, exit codes, reasons on stderr, bare timestamps as container-local time) and extend `run` with the branch: `supervise`/`wireguard` spawn and supervise (signals forwarded, zombies reaped, exit code passed through, `DEVKIT_SUPERVISED_PING`, the secrets scrubbed), the tunnel steps, the poll, the tunnel heartbeat, the ping (URL rules, `/start`/`/fail`, the Python subprocess), the no-ping log line.
+- **Subcommands**: add `healthcheck` (the paragraph from spec 7: files only, `--file` repeatable, `--max-age`, exit codes, reasons on stderr, bare timestamps as container-local time) and extend `run` with the branch: `supervise`/`wireguard` spawn and supervise (signals forwarded, zombies reaped, exit code passed through, `DEVKIT_SUPERVISED_PING`, the secrets scrubbed), the tunnel steps, the poll, the tunnel heartbeat, the ping (URL rules, `/start`/`/fail`, in-process over TLS with Mozilla's roots), the no-ping log line.
 - **`[tool.docker]` schema** table: rows for `supervise` and `wireguard`.
 - New section **Environment contract**: the `WG_*` table from spec 6 plus `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL`, `DEVKIT_SUPERVISED_PING`.
 - New section **Heartbeat files**: the two paths, the format, freshness, who writes what (spec 7's first two paragraphs).
@@ -1889,7 +1953,7 @@ Expected: all green. Delete the healthcheck entry from `todo.md`.
 ```bash
 git push -u origin supervisor-wireguard
 gh pr create --title "feat: supervisor, wireguard mode, heartbeat healthcheck, compose template" --body "$(cat <<'EOF'
-Sections 4 to 9 of docs/superpowers/specs/2026-09-08-container-wireguard-mode-design.md: the `supervise` and `wireguard` switches, the supervising entrypoint, the tunnel with keys over stdin and the stale-and-re-up rule, the `healthcheck` subcommand over heartbeat files, the healthchecks.io ping through the venv's Python, the compose template as package data with rule annotations, and the gated Dockerfile block. Three smoke tests and a render check in CI.
+Sections 4 to 9 of docs/superpowers/specs/2026-09-08-container-wireguard-mode-design.md: the `supervise` and `wireguard` switches, the supervising entrypoint, the tunnel with keys over stdin and the stale-and-re-up rule, the `healthcheck` subcommand over heartbeat files, the healthchecks.io ping through `ureq`, the compose template as package data with rule annotations, and the gated Dockerfile block. Three smoke tests and a render check in CI.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -1923,4 +1987,4 @@ Expected: the run advances `devkit-container`, replaces `docker/Dockerfile` (no 
 
 **Placeholders.** None; the two places that invite adaptation (jiff's `Display` form in Task 2, the Monty 0.0.x API in the language plan) say exactly what to do instead.
 
-**Type consistency.** `heartbeat::check(&Path, u64, jiff::Timestamp) -> Result<(), String>` is used that way in Tasks 3 and 6. `ping::Ping::configure(Option<&str>, Option<&str>, Option<&str>)`, `Ping::url(Kind)`, `ping::slug(Option<&str>, &[String])`, `ping::send(&Path, &str, &str, Option<u32>)` match Tasks 4, 6, 7. `wireguard::Config::from_env(&dyn Fn(&str) -> Option<String>)`, `Tunnel::start(Config)`, `latest_handshake() -> Result<Option<u64>>`, `act(Action)`, `down()`, `Assessor::new(u64)` / `assess(u64, Option<u64>) -> (bool, Action)` match Tasks 5, 6, 7. `supervisor::Plan { exe, app_root, tunnel: Option<(Tunnel, u64)>, poll_secs, ping }` and `supervisor::run(Plan) -> Result<u8>` match Tasks 6 and 7. `run::run -> Result<u8>` is consumed by `main.rs` in Task 7.
+**Type consistency.** `heartbeat::check(&Path, u64, jiff::Timestamp) -> Result<(), String>` is used that way in Tasks 3 and 6. `ping::Ping::configure(Option<&str>, Option<&str>, Option<&str>)`, `Ping::url(Kind)`, `ping::slug(Option<&str>, &[String])`, `ping::agent() -> ureq::Agent`, `ping::send(&ureq::Agent, &str, &str) -> Result<(), String>` match Tasks 4 and 6. `wireguard::Config::from_env(&dyn Fn(&str) -> Option<String>)`, `Tunnel::start(Config)`, `latest_handshake() -> Result<Option<u64>>`, `act(Action)`, `down()`, `Assessor::new(u64)` / `assess(u64, Option<u64>) -> (bool, Action)` match Tasks 5, 6, 7. `supervisor::Plan { exe, app_root, tunnel: Option<(Tunnel, u64)>, poll_secs, ping }` and `supervisor::run(Plan) -> Result<u8>` match Tasks 6 and 7. `run::run -> Result<u8>` is consumed by `main.rs` in Task 7.

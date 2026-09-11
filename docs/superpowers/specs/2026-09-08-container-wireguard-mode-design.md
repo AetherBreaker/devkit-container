@@ -282,11 +282,12 @@ in the request body, plain pings resuming when every file is fresh again; 10 s t
 best-effort, one log line per failure, never fatal. The check's period is set at or above the poll
 interval and its grace at or above 180 s, on the healthchecks.io side. No URL and no key, or a key
 without a slug: no pinging, one log line at start (a warning in wireguard mode, where the tunnel is
-then visible to Docker but not to healthchecks.io). The request is made by the venv's
-Python (`urllib`, the same call `aeth_ext` makes), spawned per ping as uid 999 with the URL and
-body on stdin, never in argv: the image always has that Python, its OpenSSL does the TLS, no TLS
-stack enters the root process, and the static musl build stays pure Rust (every Rust TLS provider
-needs a C compiler for the target, which the Windows-hosted smoke build has none of).
+then visible to Docker but not to healthchecks.io). The request is made
+in-process by a Rust HTTPS client (`ureq` over rustls with `ring` and Mozilla's bundled roots),
+on a thread so the loop never waits on the network; the response body is never read. In
+wireguard mode that is the root process: outbound only, to one host, the reply discarded. The
+musl smoke wheel cross-compiles through zig, the C compiler `ring` needs; the build bends to the
+feature, not the other way round.
 
 **Ownership.** When the supervisor has a URL, or a key and a slug, at spawn, it owns the ping and
 sets `DEVKIT_SUPERVISED_PING=1` on the child. `aeth_ext` skips its periodic ping under that
@@ -531,7 +532,9 @@ healthchecks.io: `/start` once, plain while healthy, `/fail` on the stale transi
   pings, and the child is told at spawn. A consent file written by the app was rejected for the
   same reason.
 - **Slug from compose, not the first service.** See section 7.
-- **The ping through the venv's Python, not a Rust HTTPS client.** rustls needs a C compiler for
-  the target through `ring` or `aws-lc`, and the smoke test builds the musl wheel on Windows with
-  none; Python and OpenSSL are already in the image, and a subprocess as 999 keeps TLS out of
-  PID 1.
+- **The ping in Rust, not through the venv's Python.** A Python subprocess per ping was proposed
+  to keep `ring`'s C sources out of the musl cross-build, which had no C compiler on Windows; that
+  put a build condition ahead of the feature and spawned an interpreter every poll. The build got
+  zig instead (maturin's `--zig`, verified from Windows with no C toolchain), and the client is
+  `ureq`. Mozilla's bundled roots rather than the image's store: a self-hosted healthchecks
+  behind a private CA is out of scope.
