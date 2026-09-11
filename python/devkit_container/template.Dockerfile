@@ -63,6 +63,12 @@ FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 RUN groupadd --system --gid 999 nonroot \
   && useradd --system --gid 999 --uid 999 --create-home nonroot
 
+# Wireguard mode: the tools the entrypoint shells out to, so they version with the binary.
+# !if keys("tool.docker.wireguard"):
+RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \
+  && rm -rf /var/lib/apt/lists/*
+# !end
+
 WORKDIR /app
 
 # Prevents Python from writing pyc files.

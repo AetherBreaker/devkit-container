@@ -54,12 +54,12 @@ jobs:
           python-version: "3.14"
 
       # The package data must ride in the wheel: a project renders its Dockerfile from it.
-      - name: maturin build, assert template.Dockerfile is in the wheel, devkit-container --version
+      - name: maturin build, assert template.Dockerfile and compose.template.yaml are in the wheel, devkit-container --version
         shell: bash
         run: |
           uv sync
           uv run maturin build --release --out dist
-          uv run python -c "import zipfile,glob; names=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert 'devkit_container/template.Dockerfile' in names, names"
+          uv run python -c "import zipfile,glob; names=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert {'devkit_container/template.Dockerfile', 'devkit_container/compose.template.yaml'} <= set(names), names"
           uv run maturin develop
           uv run --no-sync devkit-container --version
 

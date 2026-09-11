@@ -1,0 +1,86 @@
+services:
+# !service-block:
+  {service}:
+    # !rule exact
+    container_name: {service}
+    build:
+      # !rule exact
+      context: .
+      # !rule exact
+      dockerfile: docker/Dockerfile
+      args:
+        # !rule repo
+        GIT_REPO: {git_repo}
+        # !rule presence
+        GIT_TAG: {git_tag}
+    # !rule presence
+    restart: no
+    # !rule volume-target
+    volumes:
+      - type: bind
+        source: /data/{package}_files
+        target: /app/persisted_data
+    # !if dep("aeth-ext") or keys("tool.docker.supervise") or keys("tool.docker.wireguard") as heartbeat:
+    # !rule env-keys
+    environment:
+      - HEARTBEAT_SLUG={service}
+    # !end heartbeat
+    # !if dep("aeth-ext"):
+      - ALERTS_EMAIL=info@sweetfiretobacco.com
+      - ALERTS_EMAIL_PWD=${ALERTS_EMAIL_PWD:?}
+      - ALERTS_RECIPIENTS=["jacob.ogden@sweetfiretobacco.com"]
+    # !end
+    # !if keys("tool.docker.wireguard"):
+      - WG_PRIVATE_KEY=${WG_PRIVATE_KEY:?}
+      - WG_ADDRESS=${WG_ADDRESS:?}
+      - WG_PEER_PUBLIC_KEY=${WG_PEER_PUBLIC_KEY:?}
+      - WG_PEER_ENDPOINT=${WG_PEER_ENDPOINT:?}
+      - WG_PEER_ALLOWED_IPS=${WG_PEER_ALLOWED_IPS:?}
+      - WG_PEER_PRESHARED_KEY=${WG_PEER_PRESHARED_KEY:-}
+      - WG_PERSISTENT_KEEPALIVE=${WG_PERSISTENT_KEEPALIVE:-}
+      - WG_HANDSHAKE_TIMEOUT_SECS=${WG_HANDSHAKE_TIMEOUT_SECS:-}
+      - WG_POLL_SECS=${WG_POLL_SECS:-}
+      - WG_STALE_SECS=${WG_STALE_SECS:-}
+    # !end
+    # !if keys("tool.docker.wireguard"):
+    # !rule presence
+    cap_add:
+      - NET_ADMIN
+    # !end
+    # !rule presence
+    networks:
+      - coolify
+    healthcheck:
+      # !if keys("tool.docker.wireguard"):
+      # !rule exact-list
+      test:
+        - CMD
+        - /app/.venv/bin/devkit-container
+        - healthcheck
+        - --file
+        - /app/persisted_data/logs/heartbeat.txt
+        - --file
+        - /app/persisted_data/logs/wireguard-heartbeat.txt
+      # !rule exact
+      start_period: 90s
+      # !end
+      # !if not keys("tool.docker.wireguard"):
+      # !rule exact-list
+      test:
+        - CMD
+        - /app/.venv/bin/devkit-container
+        - healthcheck
+      # !rule exact
+      start_period: 15s
+      # !end
+      # !rule exact
+      interval: 30s
+      # !rule exact
+      timeout: 5s
+      # !rule exact
+      retries: 3
+# !end service-block
+
+networks:
+  coolify:
+    external: true
