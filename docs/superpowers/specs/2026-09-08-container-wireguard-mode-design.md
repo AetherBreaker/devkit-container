@@ -87,9 +87,9 @@ two functions and a few flags, all served by `setup`:
   itself contains a dot is not addressable; none of ours does.
 - `dep("<name>")`: `True` when the project depends on the package, in `[project].dependencies`
   or any dependency group, or is that package.
-- bare flags for facts not in `pyproject.toml`: `rust` (a `Cargo.toml` at the root) and
-  `publish_index` (an index with a publish URL). The plan checks each existing gate's predicate in
-  `setup` and adds a flag only where a predicate cannot be expressed through `keys`.
+- bare flags for facts not in `pyproject.toml`: `rust` (a `Cargo.toml` at the root),
+  `publish_index` (an index with a publish URL) and `docker_files` (a Dockerfile or compose file
+  on disk, which seeds `[tool.docker]` today under `if-docker`). Anything else is `keys`.
 
 Everything else is Python as Python defines it: `not`, `and`, `or`, comparisons, `in`, string
 methods, `any`, `all`, parentheses. Nothing is rewritten before evaluation; the text is the
@@ -282,9 +282,11 @@ in the request body, plain pings resuming when every file is fresh again; 10 s t
 best-effort, one log line per failure, never fatal. The check's period is set at or above the poll
 interval and its grace at or above 180 s, on the healthchecks.io side. No URL and no key, or a key
 without a slug: no pinging, one log line at start (a warning in wireguard mode, where the tunnel is
-then visible to Docker but not to healthchecks.io). The client is a Rust HTTPS client with rustls
-(plan's call; the static musl smoke build must keep working). It runs as root in wireguard mode:
-outbound only, to one host, and the response body is never parsed.
+then visible to Docker but not to healthchecks.io). The request is made by the venv's
+Python (`urllib`, the same call `aeth_ext` makes), spawned per ping as uid 999 with the URL and
+body on stdin, never in argv: the image always has that Python, its OpenSSL does the TLS, no TLS
+stack enters the root process, and the static musl build stays pure Rust (every Rust TLS provider
+needs a C compiler for the target, which the Windows-hosted smoke build has none of).
 
 **Ownership.** When the supervisor has a URL, or a key and a slug, at spawn, it owns the ping and
 sets `DEVKIT_SUPERVISED_PING=1` on the child. `aeth_ext` skips its periodic ping under that
@@ -529,3 +531,7 @@ healthchecks.io: `/start` once, plain while healthy, `/fail` on the stale transi
   pings, and the child is told at spawn. A consent file written by the app was rejected for the
   same reason.
 - **Slug from compose, not the first service.** See section 7.
+- **The ping through the venv's Python, not a Rust HTTPS client.** rustls needs a C compiler for
+  the target through `ring` or `aws-lc`, and the smoke test builds the musl wheel on Windows with
+  none; Python and OpenSSL are already in the image, and a subprocess as 999 keeps TLS out of
+  PID 1.
