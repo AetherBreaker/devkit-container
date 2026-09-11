@@ -77,28 +77,28 @@ block's extent.
 
 ### 2.4 Expressions
 
-The text between `if` and the colon is a Python expression, evaluated for truthiness. Three kinds
-of name are available, resolved by `setup` before evaluation:
+The text between `if` and the colon is a Python expression, evaluated for truthiness. It sees
+two functions and a few flags, all served by `setup`:
 
-- `keys.<path>`: a value from the project's `pyproject.toml`, the path written with TOML key names
-  verbatim, hyphens included (`keys.tool.ruff.lint.per-file-ignores`). TOML keys are not Python
-  identifiers, so `setup` rewrites each path occurrence to a generated input variable holding the
-  value: tables become dicts, arrays lists, strings, integers, floats and booleans themselves,
-  datetimes strings, and a missing path `None`. Item syntax (`keys["tool"]`) is not supported.
+- `keys("<path>")`: the value at that dotted path in the project's `pyproject.toml`, the segments
+  being TOML key names verbatim (`keys("tool.ruff.lint.per-file-ignores")`). Tables come back as
+  dicts, arrays as lists, strings, integers, floats and booleans as themselves, datetimes as
+  strings, and a path with any segment missing as `None`. The path is split on dots, so a key that
+  itself contains a dot is not addressable; none of ours does.
 - `dep("<name>")`: `True` when the project depends on the package, in `[project].dependencies`
-  or any dependency group, or is that package. The argument must be a string literal; `setup`
-  resolves the call to a boolean input the same way.
+  or any dependency group, or is that package.
 - bare flags for facts not in `pyproject.toml`: `rust` (a `Cargo.toml` at the root) and
   `publish_index` (an index with a publish URL). The plan checks each existing gate's predicate in
   `setup` and adds a flag only where a predicate cannot be expressed through `keys`.
 
 Everything else is Python as Python defines it: `not`, `and`, `or`, comparisons, `in`, string
-methods, `any`, `all`, parentheses. Examples:
+methods, `any`, `all`, parentheses. Nothing is rewritten before evaluation; the text is the
+program. Examples:
 
 ```yaml
-# !if keys.tool.docker.wireguard:
-# !if dep("aeth-ext") and keys.project.name != "aeth-ext":
-# !if "smoke" in (keys.tool.docker.services or ()):
+# !if keys("tool.docker.wireguard"):
+# !if dep("aeth-ext") and keys("project.name") != "aeth-ext":
+# !if "smoke" in (keys("tool.docker.services") or ()):
 # S!if dep("mypy"):
 - FOO=bar  # !if not publish_index
 ```
@@ -112,21 +112,24 @@ it needs) is what makes the hard error safe.
 ### 2.5 Evaluation
 
 Gate text is static, so `setup` sweeps every template it will render, collects each distinct
-expression, resolves the names, evaluates the list once, and renders from the answers. The
-resolver also yields, per expression, the set of `keys` paths it read, known statically from the
-rewrite.
+expression, evaluates the list once against the project, and renders from the answers.
 
 The evaluator is the `monty` crate (pydantic's Python-subset interpreter in Rust: Ruff's parser, its
 own VM, no CPython, no C toolchain), pinned exactly, behind a one-function seam in its own module:
-a list of expressions, each with its named inputs, in; a truth value or an error per
-expression out. Nothing outside that module names a Monty type. The seam exists so that `rustpython-vm` can
-replace Monty if the gates ever want more Python than the subset offers: that swap is a rewrite
-of the one module and a Cargo change, with the module's tests as the acceptance suite.
+a list of expressions, the flag values, and the two functions as Rust closures in; a truth value
+or an error per expression out. `keys` and `dep` are host functions: the sandbox suspends on the
+call, the closure answers from the `toml_edit` document, the run resumes. Nothing outside that
+module names a Monty type. The seam exists so that `rustpython-vm` can replace Monty if the gates
+ever want more Python than the subset offers: that swap is a rewrite of the one module and a
+Cargo change, with the module's tests as the acceptance suite.
 
 **The refusal.** A committing run merges into HEAD's `pyproject.toml` but renders from the working
-copy's, so any value the render depended on must agree between the two. `cli` today compares
-`[tool.docker].services` by name. It now compares `services` plus every `keys` path any evaluated
-gate read, and refuses naming the first path that differs. No key is special-cased.
+copy's, so the render must not depend on anything that differs between the two. `cli` today
+compares `[tool.docker].services` by name. It now evaluates every gate twice, against the working
+copy's document and against HEAD's (an empty document when HEAD has none), and refuses on the
+first gate whose verdicts differ, naming the template and the expression. `services` keeps its
+explicit comparison, since the scaffold reads it outside any gate. No key is special-cased, and
+nothing tracks which keys an expression read.
 
 ### 2.6 Compose annotations
 
@@ -148,7 +151,7 @@ Two markers are read by the compose scaffold parser after gating, not by the gat
 Every `setup-project:` marker in `devkit-templates` and in `setup`'s fixtures is rewritten:
 `if-<flag>` → `!if <expr>:` with an `end`, `if-no-<flag>` → `!if not <expr>:`, `if-dep X` above a
 table or heading → `S!if dep("X"):`, `if-aeth-ext` → `dep("aeth-ext")`, `if-docker-services` and
-`if-docker` → `keys.tool.docker.services` where that is their predicate, `service-block` →
+`if-docker` → `keys("tool.docker.services")` where that is their predicate, `service-block` →
 `!service-block:`. The compose template in `devkit-templates` gains its `rule` annotations in
 the same rewrite, with today's content otherwise unchanged, since the `RULES` table goes with the
 same devkit release. The structural gating in `md_block.rs` and `toml_merge.rs`, the `aeth-ext`
@@ -309,7 +312,7 @@ deploy with a dead tunnel failing is correct.
 engine enforces carries its `rule` line, and the three gated regions read:
 
 ```yaml
-    # !if dep("aeth-ext") or keys.tool.docker.supervise or keys.tool.docker.wireguard as heartbeat:
+    # !if dep("aeth-ext") or keys("tool.docker.supervise") or keys("tool.docker.wireguard") as heartbeat:
     # !rule env-keys
     environment:
       - HEARTBEAT_SLUG={service}
@@ -319,7 +322,7 @@ engine enforces carries its `rule` line, and the three gated regions read:
       - ALERTS_EMAIL_PWD=${ALERTS_EMAIL_PWD:?}
       - ALERTS_RECIPIENTS=["jacob.ogden@sweetfiretobacco.com"]
     # !end
-    # !if keys.tool.docker.wireguard:
+    # !if keys("tool.docker.wireguard"):
       - WG_PRIVATE_KEY=${WG_PRIVATE_KEY:?}
       - WG_ADDRESS=${WG_ADDRESS:?}
       - WG_PEER_PUBLIC_KEY=${WG_PEER_PUBLIC_KEY:?}
@@ -331,7 +334,7 @@ engine enforces carries its `rule` line, and the three gated regions read:
       - WG_POLL_SECS=${WG_POLL_SECS:-}
       - WG_STALE_SECS=${WG_STALE_SECS:-}
     # !end
-    # !if keys.tool.docker.wireguard:
+    # !if keys("tool.docker.wireguard"):
     # !rule presence
     cap_add:
       - NET_ADMIN
@@ -341,7 +344,7 @@ engine enforces carries its `rule` line, and the three gated regions read:
 and under `healthcheck:`, one of two `test` lists with its `start_period`:
 
 ```yaml
-      # !if keys.tool.docker.wireguard:
+      # !if keys("tool.docker.wireguard"):
       # !rule exact-list
       test:
         - CMD
@@ -354,7 +357,7 @@ and under `healthcheck:`, one of two `test` lists with its `start_period`:
       # !rule exact
       start_period: 90s
       # !end
-      # !if not keys.tool.docker.wireguard:
+      # !if not keys("tool.docker.wireguard"):
       # !rule exact-list
       test:
         - CMD
@@ -382,7 +385,7 @@ with the mode off is untouched. Keys are never removed: a project turning the mo
 **Dockerfile** (this repo's template): in the final stage,
 
 ```dockerfile
-# !if keys.tool.docker.wireguard:
+# !if keys("tool.docker.wireguard"):
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \
   && rm -rf /var/lib/apt/lists/*
 # !end
@@ -426,14 +429,15 @@ The CI runner loads the module (`sudo modprobe wireguard`) before the wireguard 
 ## 12. Tests
 
 **`setup`, the language.** A table of expressions against a fixture `pyproject.toml`: each
-operator, `keys` paths present, missing and hyphenated, each value type, `dep` by dependency,
-by group and by self, each flag, and the error cases (syntax, unknown name, non-literal `dep`
-argument). Block structure: explicit, one-liner, structural per file type (each unit rule, fences
+operator, `keys` paths present, missing and hyphenated, each value type, a computed path, `dep`
+by dependency, by group and by self, each flag, and the error cases (syntax, unknown name, a
+non-string argument). Block structure: explicit, one-liner, structural per file type (each unit rule, fences
 in markdown, continuations in Dockerfiles), nesting three deep with a named end unwinding two,
 trailing ends, markers at every indent. Errors: unclosed block, unknown end name, an end naming a
 structural block, an explicit block crossing a structural boundary, an opener without a colon on
-its own line. Evaluation: each distinct expression evaluated once per run; the recorded `keys`
-paths; the refusal on a path a gate read and not on one it did not. The evaluator seam: its tests
+its own line. Evaluation: each distinct expression evaluated once per run; the refusal when a gate's
+verdict differs between HEAD and the working copy, and not when a key changed without flipping
+any gate. The evaluator seam: its tests
 are written against the seam's signature, not Monty's, so they are the acceptance suite for a swap.
 Compose: `rule` kinds read from the scaffold, a `rule` line not followed by a key refused, the
 scaffold read from the container package when present and from the templates package otherwise.
@@ -488,9 +492,15 @@ healthchecks.io: `/start` once, plain while healthy, `/fail` on the stale transi
   PATH. Monty evaluates in-process with real Python semantics for expressions, no C toolchain,
   and a small dependency tree. `rustpython-vm` (a full interpreter, sixty-plus crates, tens of
   megabytes) is the fallback behind the seam if the subset ever bites.
-- **`keys` paths rewritten by `setup`, not a live object.** TOML keys contain hyphens and Python
-  identifiers cannot, so `keys.tool.ruff.lint.per-file-ignores` is only possible as a rewrite.
-  The rewrite also yields the read set statically, which the refusal needs.
+- **`keys` is a function taking the dotted path, not attribute access and not a dict.** Dot
+  access (`keys("tool.docker.wireguard")`) needs an object whose missing attributes are falsy and
+  chainable; Monty's sandbox classes dispatch no `__getattr__` and its instances are always
+  truthy, so on Monty that syntax is only possible as a textual rewrite with its own rules, which
+  stops the gate text being Python. The `tomllib` dict shape is Python but makes every optional
+  key a `.get` chain. A function with the path as a string is Python, reads as a TOML path,
+  handles hyphens, returns `None` on a miss, and has the same shape as `dep`.
+- **Refusal by double evaluation, not by a recorded read set.** Evaluating each gate against both
+  documents asks the actual question, covers computed paths, and needs no tracking.
 - **Explicit ends, not indentation.** Editors format templates on save, so whitespace cannot
   carry meaning; and in YAML a sibling key shares the gated key's indent, so no indentation rule
   can say "this key and its subtree, then stop". `S!` keeps the implicit end where the file's own
