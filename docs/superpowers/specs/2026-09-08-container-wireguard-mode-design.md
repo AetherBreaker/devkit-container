@@ -285,9 +285,9 @@ without a slug: no pinging, one log line at start (a warning in wireguard mode, 
 then visible to Docker but not to healthchecks.io). The request is made
 in-process by a Rust HTTPS client (`ureq` over rustls with `ring` and Mozilla's bundled roots),
 on a thread so the loop never waits on the network; the response body is never read. In
-wireguard mode that is the root process: outbound only, to one host, the reply discarded. The
-musl smoke wheel cross-compiles through zig, the C compiler `ring` needs; the build bends to the
-feature, not the other way round.
+wireguard mode that is the root process: outbound only, to one host, the reply discarded. The smoke
+tests build their wheel inside the maturin container, where `ring`'s C compiles natively; the host
+needs Docker and nothing else, and the wheel is a manylinux one, as a release builds it.
 
 **Ownership.** When the supervisor has a URL, or a key and a slug, at spawn, it owns the ping and
 sets `DEVKIT_SUPERVISED_PING=1` on the child. `aeth_ext` skips its periodic ping under that
@@ -533,8 +533,9 @@ healthchecks.io: `/start` once, plain while healthy, `/fail` on the stale transi
   same reason.
 - **Slug from compose, not the first service.** See section 7.
 - **The ping in Rust, not through the venv's Python.** A Python subprocess per ping was proposed
-  to keep `ring`'s C sources out of the musl cross-build, which had no C compiler on Windows; that
-  put a build condition ahead of the feature and spawned an interpreter every poll. The build got
-  zig instead (maturin's `--zig`, verified from Windows with no C toolchain), and the client is
-  `ureq`. Mozilla's bundled roots rather than the image's store: a self-hosted healthchecks
-  behind a private CA is out of scope.
+  to keep `ring`'s C sources out of the smoke test's musl cross-build, which had no C compiler on
+  Windows; that put a build condition ahead of the feature and spawned an interpreter every poll.
+  The cross-build went instead: the smoke test builds its wheel in the maturin container, where
+  the C compiles natively (zig cross-compiling from Windows also worked, and was rejected as
+  tooling for a test's sake). The client is `ureq`. Mozilla's bundled roots rather than the
+  image's store: a self-hosted healthchecks behind a private CA is out of scope.

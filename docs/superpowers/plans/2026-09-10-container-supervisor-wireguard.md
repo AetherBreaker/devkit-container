@@ -6,7 +6,7 @@
 
 **Architecture:** `run` keeps its checks and grows one branch: exec (today) or supervise. Four new modules: `heartbeat` (timestamp files: parse, freshness, atomic write), `healthcheck` (the subcommand), `ping` (URL building; the request itself through `ureq`, on a thread so the loop never waits on the network), `wireguard` (shell-outs to `ip`/`wg`, a pure stale-and-re-up state machine), `supervisor` (spawn as 999, reap, forward signals, the poll loop that ties the other three together). The compose template joins `template.Dockerfile` in the `devkit_container` package; both carry `# !` gates on `keys("tool.docker.wireguard")` and the compose one carries `# !rule` annotations.
 
-**Tech Stack:** Rust 2024, `clap`, `anyhow`, `toml_edit`, `nix` 0.31 (`user`, `signal`, `process`), `signal-hook` 0.4, `jiff` 0.2 (`tzdb-bundle-always`), `ureq` 3 (`rustls` feature: rustls, `ring`, Mozilla's roots; Unix only); zig through maturin's `--zig` for the musl smoke wheel; Docker for the smoke tests; `wireguard-tools` and `iproute2` inside the image.
+**Tech Stack:** Rust 2024, `clap`, `anyhow`, `toml_edit`, `nix` 0.31 (`user`, `signal`, `process`), `signal-hook` 0.4, `jiff` 0.2 (`tzdb-bundle-always`), `ureq` 3 (`rustls` feature: rustls, `ring`, Mozilla's roots; Unix only); Docker for the smoke tests, which also build the smoke wheel in the official maturin image; `wireguard-tools` and `iproute2` inside the image.
 
 **Spec:** `docs/superpowers/specs/2026-09-08-container-wireguard-mode-design.md`, sections 3 (the package-data half), 4 to 9 (this repo's parts), 10 (step 2), 11, 12 (this repo's paragraphs), 13, 14. Depends on the template-language plan's releases (aeth-devkit 15.0.0, devkit-templates 1.2.0) for the render check in Task 9 only; every other task builds and tests without them.
 
@@ -14,7 +14,7 @@
 
 - Run Python and tooling under `uv run`; `uv add`/`uv remove`/`uv lock` are refused by the project hook (use `uv sync`, `poe lock`).
 - `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` run on Windows and Linux in CI: every Unix-only item is behind `#[cfg(unix)]` and the Windows build stays warning-free (see the `cfg_attr(not(unix), allow(dead_code))` pattern in `main.rs`).
-- The smoke wheel is a static `x86_64-unknown-linux-musl` build cross-compiled through maturin's `--zig`: zig is the C compiler and the linker for the target, so `ring`'s C sources build from Windows with no C toolchain installed (verified on this checkout: a statically linked ELF, 28 s warm). `uv run --with ziglang` supplies zig without touching the lock; `CARGO_ZIGBUILD_PYTHON_PATH=python` lets maturin find it under `uv run` on Windows, which has no `python3`; the zig wrapper scripts split on spaces, so the build runs with a `CARGO_TARGET_DIR` whose path has none. `ureq` is a `cfg(unix)` dependency, so the Windows wheel never compiles `ring`; the manylinux release container has gcc.
+- The smoke tests build their wheel inside the official maturin container (`ghcr.io/pyo3/maturin`, pinned) with the repo mounted: a native manylinux build with the container's gcc, exactly as the release job builds one. The host needs Docker and nothing else: no cross-compiling, no C toolchain, no extra Rust target. `ureq` is a `cfg(unix)` dependency, so the Windows wheel never compiles `ring`.
 - Secrets never appear in argv, logs or error messages: `WG_PRIVATE_KEY`, `WG_PEER_PRESHARED_KEY`, `PINGKEY`, and any ping URL. Errors name the variable, never the value (spec 5).
 - Defaults, exactly (spec 6, 7): keepalive 25, handshake timeout 60 s, poll 30 s, stale 180 s, heartbeat max age 180 s; heartbeat files `/app/persisted_data/logs/heartbeat.txt` and `/app/persisted_data/logs/wireguard-heartbeat.txt` (relative to `--app-root` in tests).
 - Environment names, exactly: `WG_PRIVATE_KEY`, `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_PEER_ENDPOINT`, `WG_PEER_ALLOWED_IPS`, `WG_PEER_PRESHARED_KEY`, `WG_PERSISTENT_KEEPALIVE`, `WG_HANDSHAKE_TIMEOUT_SECS`, `WG_POLL_SECS`, `WG_STALE_SECS`, `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL`, `DEVKIT_SUPERVISED_PING`. Empty is unset.
@@ -59,32 +59,38 @@ In `Cargo.toml`:
 Run: `cargo build`
 Expected: `Finished` (on Windows `nix`/`signal-hook`/`ureq` are skipped).
 
-- [ ] **Step 2: Cross-compile the smoke wheel through zig**
+- [ ] **Step 2: Build the smoke wheel inside the maturin container**
 
-`ring` has C sources, so the musl cross-build now needs a C compiler for the target; zig is one, and maturin drives it with `--zig`. In `tests/docker_smoke.rs` replace `build_wheel` and its doc comment:
+`ring` has C sources, so the smoke wheel can no longer be cross-compiled from a host with no C toolchain (the Windows dev machines). The test already needs Docker, so the wheel is built where the image is: in the official maturin container with the repo mounted, a native manylinux build with the container's gcc, the same way the release job builds one. In `tests/docker_smoke.rs`:
+
+- delete `const MUSL`;
+- in the module doc, `Needs docker, the `x86_64-unknown-linux-musl`\n//! target and the network` becomes `Needs docker and the network`;
+- the `#[ignore = "…"]` reason becomes `needs docker and the network; run with --ignored`;
+- `eprintln!("building the wheel for {MUSL}")` becomes `eprintln!("building the wheel in {MATURIN_IMAGE}")`;
+- replace `build_wheel` and its doc comment:
 
 ```rust
-/// The wheel the image installs, built from this checkout for the image's platform. The
-/// binary is a static musl build so the same wheel serves a glibc image, and the platform
-/// tag is the generic `linux` one so uv accepts it there. zig compiles `ring`'s C and links
-/// the binary, on every host; a released wheel is manylinux, built in maturin's container.
+/// The maturin release that builds the wheel; the image carries its own Rust toolchain and gcc.
+const MATURIN_IMAGE: &str = "ghcr.io/pyo3/maturin:v1.15.0";
+
+/// The wheel the image installs, built from this checkout inside the maturin container: a
+/// manylinux wheel exactly as a release builds one, so no cross-compiling and no C toolchain
+/// on the host. Two named volumes keep the cargo registry and the target dir between runs
+/// (the host's `target/` is never written to); they are caches, so `Cleanup` leaves them.
 fn build_wheel(root: &Path, out: &Path) -> PathBuf {
-  let mut cmd = Command::new("uv");
+  // Created here so it is ours, not the container's root: the temp dir must stay removable.
+  std::fs::create_dir_all(out).unwrap();
+  // `root()` is canonical, which on Windows is a `\\?\` verbatim path Docker does not take.
+  let src = root.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+  let mut cmd = Command::new("docker");
   cmd
-    .args(["run", "--with", "ziglang", "maturin", "build", "--release", "--target", MUSL])
-    .args(["--compatibility", "linux", "--zig", "--out"])
-    .arg(out)
-    .current_dir(root)
-    // maturin finds zig through `python -m ziglang`; under `uv run` that is the environment's
-    // python, and Windows has no `python3` for the default to find.
-    .env("CARGO_ZIGBUILD_PYTHON_PATH", "python");
-  // The zig wrapper scripts split on spaces, so a checkout under a path with one (this one:
-  // `D:\SFT Software Projects\...`) builds into the temp dir instead.
-  if std::env::var_os("CARGO_TARGET_DIR").is_none() && root.to_string_lossy().contains(' ') {
-    let dir = std::env::temp_dir().join("devkit-container-musl-target");
-    assert!(!dir.to_string_lossy().contains(' '), "set CARGO_TARGET_DIR to a path without spaces");
-    cmd.env("CARGO_TARGET_DIR", dir);
-  }
+    .args(["run", "--rm", "-v"])
+    .arg(format!("{src}:/io"))
+    .arg("-v")
+    .arg(format!("{}:/out", out.display()))
+    .args(["-v", "devkit-container-cargo-registry:/usr/local/cargo/registry"])
+    .args(["-v", "devkit-container-target:/build", "-e", "CARGO_TARGET_DIR=/build"])
+    .args([MATURIN_IMAGE, "build", "--release", "--out", "/out"]);
   ok(&mut cmd);
   let wheel = std::fs::read_dir(out)
     .unwrap()
@@ -94,28 +100,28 @@ fn build_wheel(root: &Path, out: &Path) -> PathBuf {
     .expect("maturin wrote a wheel");
   let name = wheel.file_name().unwrap().to_string_lossy().into_owned();
   assert!(
-    name.ends_with("linux_x86_64.whl"),
-    "the image needs the generic linux tag, got {name}"
+    name.contains("manylinux") && name.ends_with("x86_64.whl"),
+    "expected a manylinux x86_64 wheel, got {name}"
   );
   wheel
 }
 ```
 
-The `rust-lld` linker env and its comment go. Prove the build without Docker, from the repo root (Git Bash on Windows), with `TMP` a directory whose path has no spaces:
+The `uv run maturin build --target … --compatibility linux` command, the `rust-lld` linker env and its comment go with it; `scratch_repo` and the Dockerfile helper take the wheel by whatever name it has, so nothing else changes. The wheel is a glibc build now, which the bookworm image serves; the third sentence of the old doc comment (the generic `linux` tag, the musl reason) is gone with the reason.
+
+Prove it with the smoke test itself (Docker running; on Windows, Docker Desktop):
 
 ```bash
-CARGO_TARGET_DIR="$TMP/musl-target" CARGO_ZIGBUILD_PYTHON_PATH=python \
-  uv run --with ziglang maturin build --release --target x86_64-unknown-linux-musl \
-  --compatibility linux --zig --out "$TMP/wheel"
+cargo test --test docker_smoke -- --ignored --nocapture
 ```
 
-Expected: `🛠️ Using zig for cross-compiling to x86_64-unknown-linux-musl`, then `📦 Built wheel to …/devkit_container-<version>-py3-none-linux_x86_64.whl` (the first run downloads the 94 MB ziglang wheel, which uv caches). `unzip -p "$TMP"/wheel/*.whl '*/scripts/devkit-container' | file -` reports a statically linked ELF.
+Expected: `building the wheel in ghcr.io/pyo3/maturin:v1.15.0`, then maturin's `📦 Built wheel to /out/devkit_container-<version>-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` in the output, then the existing assertions pass. The first run pulls the maturin image and compiles cold; later runs reuse the two volumes and the wheel takes about ten seconds. (Verified on this checkout from Windows with Docker Desktop: 10.5 s warm, ring included.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock tests/docker_smoke.rs
-git commit -m "chore(deps): jiff, signal-hook, ureq; the smoke wheel cross-compiles through zig for ring's C sources"
+git commit -m "chore(deps): jiff, signal-hook, ureq; the smoke wheel is built in the maturin container"
 ```
 
 - [ ] **Step 4: Write the failing tests**
@@ -1633,6 +1639,7 @@ Run it locally (`bash ci/render.sh`) once aeth-devkit 15 and devkit-templates 1.
 
 In `.github/workflows/ci.yml`:
 - add a job `render` named `"Render: both modes of a scratch Docker project through the released devkit"` on `ubuntu-latest` with checkout, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `astral-sh/setup-uv@v5` (python 3.14), then a step `bash ci/render.sh` named `ci/render.sh: setup-project into a scratch project with the mode off and on, then scan docker/ for leftovers`;
+- in `container-smoke`, delete the `targets: x86_64-unknown-linux-musl` line under `dtolnay/rust-toolchain@stable` (the wheel is built in the maturin container since Task 1);
 - in `container-smoke`, before the test step add `- name: sudo modprobe wireguard\n  run: sudo modprobe wireguard`, and change the test step to run both smoke tests: `cargo test --test docker_smoke --test docker_supervisor -- --ignored --nocapture` (the second file lands in Task 10).
 
 - [ ] **Step 3: Commit**
@@ -1689,7 +1696,7 @@ Create `tests/docker_supervisor.rs`:
 //! The supervising entrypoint end to end (spec 12): one image built with the wireguard mode
 //! on, run three ways: supervise without a tunnel (an edited pyproject), wireguard against a
 //! hub container built from the same image, and the ping against a local HTTP listener.
-//! Needs docker, the musl target, the network and a host kernel with the wireguard module
+//! Needs docker, the network and a host kernel with the wireguard module
 //! (`sudo modprobe wireguard`); `#[ignore]`, CI runs it with `--ignored`.
 
 mod common;
@@ -1784,7 +1791,7 @@ fn wg_key(image: &str) -> (String, String) {
 }
 
 #[test]
-#[ignore = "needs docker, the x86_64-unknown-linux-musl target, the network and the wireguard kernel module; run with --ignored"]
+#[ignore = "needs docker, the network and the wireguard kernel module; run with --ignored"]
 fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   ok(&mut docker(&["version", "--format", "{{.Server.Os}}"]));
   let root = root();
