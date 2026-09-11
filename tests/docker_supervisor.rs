@@ -46,16 +46,39 @@ def main() -> None:
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
     while not stop:
-        with open("/app/persisted_data/logs/heartbeat.txt", "w") as f:
+        # Atomic, as aeth_ext writes it: a reader must never see a truncated file.
+        with open("/app/persisted_data/logs/heartbeat.txt.tmp", "w") as f:
             f.write(datetime.datetime.now(datetime.UTC).isoformat())
+        os.replace("/app/persisted_data/logs/heartbeat.txt.tmp", "/app/persisted_data/logs/heartbeat.txt")
         time.sleep(1)
     sys.exit(int(os.environ.get("SMOKE_EXIT_ON_TERM", "0")))
 "#;
 
-fn wait_for(what: &str, timeout: Duration, mut probe: impl FnMut() -> bool) {
+/// Poll `probe` until true; a timeout panics with the logs of `containers`, the only
+/// evidence left once `Cleanup` has removed them.
+fn wait_for(what: &str, timeout: Duration, containers: &[&str], mut probe: impl FnMut() -> bool) {
   let deadline = Instant::now() + timeout;
   while !probe() {
-    assert!(Instant::now() < deadline, "timed out waiting for {what}");
+    if Instant::now() >= deadline {
+      let dump: Vec<String> = containers
+        .iter()
+        .map(|c| {
+          format!(
+            "--- docker logs {c}
+{}",
+            logs(c)
+          )
+        })
+        .collect();
+      panic!(
+        "timed out waiting for {what}
+{}",
+        dump.join(
+          "
+"
+        )
+      );
+    }
     std::thread::sleep(Duration::from_secs(1));
   }
 }
@@ -160,7 +183,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
       "sed 's/^wireguard = true/supervise = true/' /app/pyproject.toml > /tmp/p.toml && exec /app/.venv/bin/devkit-container run --pyproject /tmp/p.toml",
     ]),
   );
-  wait_for("the app's report", Duration::from_secs(30), || {
+  wait_for("the app's report", Duration::from_secs(30), &[&app], || {
     exec(&app, &["cat", "/app/persisted_data/report.json"]).status.success()
   });
   let report: serde_json::Value = serde_json::from_slice(&exec(&app, &["cat", "/app/persisted_data/report.json"]).stdout).unwrap();
@@ -281,7 +304,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
     ])
     .arg(&image),
   );
-  wait_for("the tunnel heartbeat", Duration::from_secs(90), || {
+  wait_for("the tunnel heartbeat", Duration::from_secs(90), &[&spoke, &hub], || {
     exec(&spoke, &["cat", "/app/persisted_data/logs/wireguard-heartbeat.txt"])
       .status
       .success()
@@ -307,7 +330,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   // --- the hub forgets the peer: stale, then the healthcheck says which file, then a re-up.
   exec_ok(&hub, &["wg", "set", "wg0", "peer", &spoke_pub, "remove"]);
   // Stale lands up to 150 s after the last handshake, whenever that was.
-  wait_for("a stale tunnel", Duration::from_secs(200), || {
+  wait_for("a stale tunnel", Duration::from_secs(200), &[&spoke, &hub], || {
     healthcheck(&spoke).status.code() == Some(1)
   });
   let stale = healthcheck(&spoke);
@@ -316,24 +339,40 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
     err.contains("wireguard-heartbeat.txt") && err.contains("stale by") && !err.contains("logs/heartbeat.txt:"),
     "{err}"
   );
-  wait_for("a re-up in the log", Duration::from_secs(20), || logs(&spoke).contains("re-up"));
-  exec_ok(&hub, &["wg", "set", "wg0", "peer", &spoke_pub, "allowed-ips", "10.8.0.20/32"]);
-  wait_for("a fresh tunnel again", Duration::from_secs(60), || {
-    healthcheck(&spoke).status.success()
+  wait_for("a re-up in the log", Duration::from_secs(20), &[&spoke], || {
+    logs(&spoke).contains("re-up")
   });
-
-  // --- the ping: /start once, plain while fresh, /fail on the stale transition.
-  wait_for("the listener's log", Duration::from_secs(30), || {
-    let log = logs(&hc);
-    log.contains("/ping/x/start") && log.contains("/ping/x/fail") && log.contains("\"GET /ping/x HTTP")
+  // --- the ping so far: /start once, then plain while fresh. The tunnel file the supervisor
+  // stopped writing goes stale a full window after that, and only then comes the one /fail;
+  // the peer stays forgotten until it does.
+  wait_for("/fail at the listener", Duration::from_secs(200), &[&spoke, &hc], || {
+    logs(&hc).contains("/ping/x/fail")
   });
   let log = logs(&hc);
+  eprintln!("--- listener log after the outage");
+  eprintln!("{log}");
   assert_eq!(log.matches("/ping/x/start").count(), 1, "{log}");
+  assert_eq!(log.matches("/ping/x/fail").count(), 1, "{log}");
+  assert!(log.contains("\"GET /ping/x HTTP"), "{log}");
+  let plain_before = log.matches("\"GET /ping/x HTTP").count();
+  // --- the hub learns the peer again: a re-up handshakes, the file is fresh, plain pings resume.
+  exec_ok(&hub, &["wg", "set", "wg0", "peer", &spoke_pub, "allowed-ips", "10.8.0.20/32"]);
+  wait_for("a fresh tunnel again", Duration::from_secs(60), &[&spoke, &hub], || {
+    healthcheck(&spoke).status.success()
+  });
+  wait_for("plain pings again", Duration::from_secs(30), &[&spoke, &hc], || {
+    logs(&hc).matches("\"GET /ping/x HTTP").count() > plain_before
+  });
+  let log = logs(&hc);
+  assert_eq!(log.matches("/ping/x/start").count(), 1, "no second /start: {log}");
+  assert_eq!(log.matches("/ping/x/fail").count(), 1, "one /fail per outage: {log}");
 
   // --- SIGTERM reaches the child and its code passes through; the interface goes down.
   ok(&mut docker(&["kill", "--signal", "TERM", &spoke]));
   assert_eq!(text(&ok(&mut docker(&["wait", &spoke]))).trim(), "7");
   let spoke_logs = logs(&spoke);
+  eprintln!("--- spoke log");
+  eprintln!("{spoke_logs}");
   assert!(
     spoke_logs.contains("wireguard public key") && spoke_logs.contains("app exited with 7"),
     "{spoke_logs}"
