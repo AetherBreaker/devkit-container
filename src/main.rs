@@ -14,6 +14,8 @@ mod prepare;
 mod pyproject;
 #[cfg(unix)]
 mod run;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod wireguard;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
