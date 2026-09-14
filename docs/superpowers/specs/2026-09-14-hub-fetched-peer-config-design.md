@@ -23,6 +23,7 @@ against text that has gone stale. The dependency map:
 | 7 Startup scripts and `scrub_env` | this repo (`run`) | 8, 9 |
 | 8 Environment contract | this repo (README), every consumer | 5, 6, 7 |
 | 9 Templates and `[tool.docker]` | this repo (package data) | 3.6, 8, 10 |
+| 9.3 The Dockerfile windows | `aeth-devkit` (`setup-project`) | 3.6 |
 | 10 Consuming projects | ScheduledReportAggregator, `tunnel-probe`, the office PC | 4, 8, 9 |
 
 ### 0.2 Source of truth, and the stop-and-ask rule
@@ -132,6 +133,12 @@ Recorded so they are not reopened.
   (the release command waits only for `release.yml`, so the tag could be deployed before the bundle
   is attached, and the file would duplicate the standard workflow's guards); opting the hub out of
   the devkit release workflow (it would drift from the standard).
+- **No hub switch.** The hub's compose additions (its capability, the forwarding sysctl, the
+  published port, its private-key line) are written by hand once and kept by the rule engine,
+  which never removes a key; its Dockerfile additions live in a window that `setup-project`
+  renders around (9.3). Rejected: a `wireguard_hub` key (a switch whose only purpose is to make
+  the shared templates render one project's lines); gating those lines on the project's name (a
+  shared template naming one project).
 - **Startup scripts as a generic feature, minimal surface.** One ordered list of console script
   names, run as root, no arguments, no timeout, nonzero exit ends the container. `scrub_env`
   generalises the private-key scrubbing. Neither key is added to the pyproject template.
@@ -303,7 +310,7 @@ with argument lists, never a shell string.
   reports.
 - Shutdown on SIGINT/SIGTERM. Nothing else.
 
-### 3.6 `pyproject.toml` and compose
+### 3.6 `pyproject.toml`, compose and Dockerfile
 
 ```toml
 [tool.docker]
@@ -311,7 +318,6 @@ services                = ["wireguard-hub"]
 required_persisted_dirs = ["persisted_data"]
 supervise               = false
 wireguard               = false
-wireguard_hub           = true
 startup_scripts         = ["wireguard-hub-up"]
 scrub_env               = ["WG_HUB_PRIVATE_KEY"]
 
@@ -319,14 +325,21 @@ scrub_env               = ["WG_HUB_PRIVATE_KEY"]
 release-workflow-jobs   = ["peers"]
 ```
 
-`setup-project` renders, from the template blocks in section 9: `cap_add: [NET_ADMIN]`,
-`sysctls: [net.ipv4.ip_forward=1]`, `ports: ["51820:51820/udp"]`, the `WG_HUB_PRIVATE_KEY`
-environment line, and the standard single-file healthcheck. The Dockerfile installs
-`wireguard-tools`, `iproute2` and `iptables`. Coolify: the domain `tunnels.sweetfiretobacco.com`
-is attached to the `wireguard-hub` service on container port 8000 in the Coolify UI, which
-provides the Traefik route and the certificate; the UDP port is published directly by compose and
-never passes through Traefik. Environment values: `WG_HUB_PRIVATE_KEY`, plus the standard
-`PINGKEY` and alert values every project has.
+There is no hub switch. `setup-project` renders the standard scaffold and the single-file
+healthcheck; the hub's own additions are written by hand once and survive every later run:
+
+- In `docker/compose.yaml`, under the service: `cap_add: [NET_ADMIN]`,
+  `sysctls: [net.ipv4.ip_forward=1]`, `ports: ["51820:51820/udp"]`, and
+  `- WG_HUB_PRIVATE_KEY=${WG_HUB_PRIVATE_KEY:?}` under `environment`. The rule engine never
+  removes a key it does not know and only appends to `environment`, so all four stay (9.2).
+- In `docker/Dockerfile`, inside the `final` window (9.3):
+  `RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables && rm -rf /var/lib/apt/lists/*`.
+  `setup-project` renders the template around the window, so the line stays.
+
+Coolify: the domain `tunnels.sweetfiretobacco.com` is attached to the `wireguard-hub` service on
+container port 8000 in the Coolify UI, which provides the Traefik route and the certificate; the
+UDP port is published directly by compose and never passes through Traefik. Environment values:
+`WG_HUB_PRIVATE_KEY`, plus the standard `PINGKEY` and alert values every project has.
 
 ### 3.7 Release, and the kept job in `release.yml`
 
@@ -714,7 +727,7 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_PEER_PRESHARED_KEY` | spoke, environment mode | no | | no | yes |
 | `WG_PERSISTENT_KEEPALIVE` | spoke, environment mode | no | 25 | no | no |
 | `WG_HANDSHAKE_TIMEOUT_SECS` | spoke | refused if set | | no | |
-| `WG_HUB_PRIVATE_KEY` | hub | yes | | `${WG_HUB_PRIVATE_KEY:?}` | via `scrub_env` |
+| `WG_HUB_PRIVATE_KEY` | hub | yes | | by hand in the hub's compose file (3.6) | via `scrub_env` |
 | `DEVKIT_CONSENT_SOCKET` | set on the app | | | set by `run` under `supervise` | |
 | `DEVKIT_SUPERVISED_PING` | set on the app | | | unchanged | |
 | `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL` | both | | | unchanged | |
@@ -732,13 +745,13 @@ the fetch passes its listener's address to the fetch code directly (4.2).
 
 | Key | Meaning |
 | --- | --- |
-| `wireguard_hub` | the project is the hub: gates the hub's Dockerfile and compose blocks; refused together with `wireguard` at `run` and reported by the render check |
 | `startup_scripts` | section 7 |
 | `scrub_env` | section 7 |
 
-None of the three is added to the pyproject template. `wireguard` keeps its meaning (a spoke).
+Neither is added to the pyproject template. `wireguard` keeps its meaning (a spoke); there is no
+hub switch (3.6).
 
-### 9.2 Compose template, the changed regions
+### 9.2 Compose template, the changed region
 
 The spoke's environment block becomes:
 
@@ -749,66 +762,73 @@ The spoke's environment block becomes:
       - WG_HUB_REPO=${WG_HUB_REPO:?}
       - WG_HUB_TOKEN=${WG_HUB_TOKEN:?}
     # !end
-    # !if keys("tool.docker.wireguard_hub"):
-      - WG_HUB_PRIVATE_KEY=${WG_HUB_PRIVATE_KEY:?}
-    # !end
 ```
 
-The gate that renders the `environment:` key itself, today
-`dep("aeth-ext") or keys("tool.docker.supervise") or keys("tool.docker.wireguard")`, gains
-`or keys("tool.docker.wireguard_hub")`, so the hub's line can never render without the key above
-it. The capability and hub-only keys:
+Nothing else in the template changes: `cap_add: [NET_ADMIN]` stays gated on `wireguard` with its
+`presence` rule, and the healthcheck arms are unchanged. The ten previous `WG_*` lines leave the
+template. The rule engine never removes keys, so a project rendered before this change keeps its
+old lines until edited by hand (section 10); the same property is what lets the hub keep its own
+`cap_add`, `sysctls`, `ports` and private-key line, written by hand (3.6): a key the scaffold does
+not annotate is never touched, a `presence` key the scaffold lacks is skipped, and `env-keys` only
+appends.
 
-```yaml
-    # !if keys("tool.docker.wireguard") or keys("tool.docker.wireguard_hub"):
-    # !rule presence
-    cap_add:
-      - NET_ADMIN
-    # !end
-    # !if keys("tool.docker.wireguard_hub"):
-    # !rule presence
-    sysctls:
-      - net.ipv4.ip_forward=1
-    # !rule presence
-    ports:
-      - "51820:51820/udp"
-    # !end
-```
+### 9.3 Dockerfile template: the spoke block and the two windows
 
-The healthcheck arms are unchanged: the hub has `wireguard = false` and gets the single-file arm.
-The ten previous `WG_*` lines leave the template. The rule engine never removes keys, so a project
-rendered before this change keeps its old lines until edited by hand (section 10). The published
-port is a literal because the template language substitutes only its fixed placeholders;
-`presence` means a project that edits the port afterwards keeps its edit.
-
-### 9.3 Dockerfile template
-
-In the final stage, replacing the existing wireguard block. Each `RUN` ends with the same apt
-list cleanup the existing block already has, unchanged:
+The wireguard block stays gated on `wireguard` as today. Two windows are added, regions
+`setup-project` renders around: `builder`, after the last instruction of the builder stage, and
+`final`, after the wireguard block and before `WORKDIR /app` in the final stage:
 
 ```dockerfile
-# !if keys("tool.docker.wireguard") or keys("tool.docker.wireguard_hub"):
-# Wireguard: the tools the entrypoint (spoke) or the startup script (hub) shells out to.
+# ---- Builder stage ----
+...
+RUN --mount=type=cache,target=/root/.cache/uv \
+  extras=$(/app/.venv/bin/devkit-container app-extra) \
+  && uv sync --frozen --no-dev --no-editable $extras
+
+# Project additions to the builder stage; setup-project renders the template around this window.
+# !window builder:
+# !end builder
+
+# ---- Final stage ----
+...
+# !if keys("tool.docker.wireguard"):
+# Wireguard mode: the tools the entrypoint shells out to, so they version with the binary.
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \
-  && <the existing apt list cleanup>
+  && rm -rf /var/lib/apt/lists/*
 # !end
-# !if keys("tool.docker.wireguard_hub"):
-# Wireguard hub: forwarding rules.
-RUN apt-get update && apt-get install -y --no-install-recommends iptables \
-  && <the existing apt list cleanup>
-# !end
+
+# Project additions to the final stage; setup-project renders the template around this window.
+# !window final:
+# !end final
+
+WORKDIR /app
 ```
+
+A window is an explicit block of the template language with the new marker word `window`, and
+unlike every other marker its pair stays in the rendered file, so the next run can find it. On
+every render `setup-project` copies the lines a project wrote between a window's markers in its
+existing Dockerfile into the same window of the rendered file, unchanged, and replaces everything
+outside the windows as today. A new file renders with empty windows; a file rendered before the
+windows existed has no markers, so its windows start empty and the diff shows the markers
+arriving. A window in the project's file that the template does not have is an error naming the
+window and its lines, never a silent drop. The hub's additions live in its `final` window (3.6).
 
 ### 9.4 `aeth-devkit` and `devkit-templates`
 
-The templates need no devkit change: `keys()` returns the value at a path, `None` when absent and
-`false` when a switch is written off, so `wireguard = false` in the hub's `pyproject.toml` (3.6)
-gates the spoke blocks off; the `presence` rule inserts a missing key with its whole scaffold
-subtree and never changes an existing one, so the list-valued `sysctls` and `ports` behave exactly
-as `cap_add` does; `env-keys` only appends, so no rule removes a key; and `setup-project` validates
-no `[tool.docker]` key beyond `services`, the silence flag and the two legacy keys, so the three
-new keys pass through. The one devkit change this document needs is the kept release job of 3.7,
-in `aeth-devkit` and `devkit-templates`.
+Two devkit changes serve this document, both in `aeth-devkit`'s `setup-project`: the kept release
+job (3.7, with its header line in `devkit-templates`) and the Dockerfile windows (9.3): the marker
+word `window` joins the four the gate pass accepts, its markers survive rendering, and the
+Dockerfile step splices the existing file's window contents into the rendered text before the
+diff. Everything else the templates need already holds: `keys()` returns the value at a path,
+`None` when absent; `env-keys` only appends and no rule removes a key, which is what lets the hub
+keep its hand-written compose additions (3.6); and `setup-project` validates no `[tool.docker]`
+key beyond `services`, the silence flag and the two legacy keys, so `startup_scripts` and
+`scrub_env` pass through.
+
+The window marker is the guard against a stale devkit: a devkit older than the release of 14
+step 1 refuses this repo's template with "unknown marker", a hard error naming it, never a silent
+drop. `devkit-container` declares no dependency on `aeth-devkit` (it would pull the devkit into
+every image), so the release order of 14 is what keeps the two in step.
 
 ## 10. Consuming projects
 
@@ -845,6 +865,8 @@ Delegated to this document and decided here:
   container, healthchecks.io slug and peer-table name `tunnel-probe`; conf asset
   `tunnel-probe.conf`.
 - The hub's kept release job is named `peers` (3.7).
+- The Dockerfile windows are named `builder` and `final`, marked `# !window <name>:` and
+  `# !end <name>` (9.3).
 - Tunnel subnet `10.8.0.0/24`. Addresses: hub `10.8.0.1/24`; office database PC `10.8.0.10/32`;
   ScheduledReportAggregator `10.8.0.20/32`; `tunnel-probe` `10.8.0.21/32`. Further peers from
   `.22` upward. The first-deploy check confirms neither the office LAN nor the VPS uses this
@@ -902,7 +924,7 @@ Topology and security:
   endpoint too, through Docker's hairpin path, with the per-peer `endpoint` override of 3.2 as the
   fallback. No DNS inside the tunnel: the database host is reached by its tunnel address.
 - **Spokes get `cap_add: [NET_ADMIN]` and nothing else**, no `devices` and no `sysctls` (9.2); the
-  hub alone adds the forwarding sysctl and the published port.
+  hub alone adds the forwarding sysctl and the published port, by hand (3.6).
 - **Security layers.** The hub's cryptokey routing and its `FORWARD` rules (3.3); the office PC's
   firewall allowing the database port only from approved tunnel addresses (next phase, 10.2); a
   read-only database account for the app; private keys only in Coolify secrets or the gitignored
@@ -936,9 +958,8 @@ connection. Startup script resolution, order, environment, failure. `scrub_env` 
 scrubs on both paths. The implicit folders of 4.4 and 5.7 created and chowned, and not part of
 the mount check. Mode detection and the refusals of 5.1.
 
-**This repo, render.** The existing dry-run render check gains the hub mode as a third render:
-`wireguard_hub = true` renders the hub blocks and the single-file healthcheck, and both switches
-together are reported.
+**This repo, render.** Unchanged in shape: the two modes through the released devkit, now with
+the window markers in the template.
 
 **This repo, smoke (Linux).** A hub container built from the test image running a minimal hub (the
 commands of 3.4 in shell are acceptable here) and serving `/version` from a small HTTP listener on
@@ -957,12 +978,15 @@ the app answers `ok`, the spoke sends SIGINT and exits 75; the hub's `/version` 
 tag and the test hub's allowed IPs to the second address, the spoke re-applies in place and the new
 address is on `wg0` without the interface having gone down. The existing off-mode, supervise-mode
 and environment-mode smoke tests stay green. The helper that applies the Dockerfile template's
-gates locally today matches one exact gate line; it learns the two gates of 9.3.
+gate locally leaves the window markers in place, as the rendered file keeps them.
 
 **`aeth-devkit`.** The kept-jobs key of 3.7: a `release.yml` holding a named job survives a
 re-render with the job spliced under `jobs` and reported; a named job the file lacks is reported,
 not an error; an unknown `[tool.devkit]` key is still refused; the fixture template's header line
-carries the new wording.
+carries the new wording. The windows of 9.3: a Dockerfile with lines inside each window survives a
+re-render with the template applied around them; a file without markers renders with empty
+windows; a window the template lacks is an error naming it and its lines; the marker word is
+accepted by the gate pass and kept in the output.
 
 **`wireguard-hub`.** `peers.toml` validation, one test per rule; the `rules.v4` cross-check; the
 startup script with a mocked `subprocess` asserting the exact command lines and that the key goes
@@ -971,14 +995,16 @@ to stdin; the `/version` response; the heartbeat gating on the interface path an
 
 ## 14. Release order
 
-1. `aeth-devkit` and `devkit-templates`: the kept release job (3.7). Independent; nothing breaks
-   without it, and the hub needs it before its first release.
+1. `aeth-devkit` and `devkit-templates`: the kept release job (3.7) and the Dockerfile windows
+   (9.3). Nothing breaks without them, and both are needed before step 2's template can be
+   rendered anywhere and before the hub's first release.
 2. `devkit-container`: everything in sections 5 to 9. Backward compatible: a spoke rendered before
    this release keeps its old compose lines and runs in environment mode. Its fetched-mode smoke
    test needs the fixture repository and the two secrets of section 11 in place first.
 3. `wireguard-hub`: created with `gh repo create AetherBreaker/wireguard-hub --private`, a stub
-   `pyproject.toml`, then `setup-project` against the releases from steps 1 and 2, the `peers` job
-   written; first release with the owner's peer rows; deployed in Coolify with the domain attached.
+   `pyproject.toml`, then `setup-project` against the releases from steps 1 and 2, the `peers`
+   job, the compose additions and the window content written by hand (3.6); first release with
+   the owner's peer rows; deployed in Coolify with the domain attached.
 4. Spokes re-rendered and migrated per 10.1, `tunnel-probe` created the same way as the hub; the
    office PC per 10.2.
 5. The first-deploy checklist of section 16, in order.
