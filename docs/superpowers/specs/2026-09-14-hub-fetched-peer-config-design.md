@@ -4,11 +4,12 @@ Date: 2026-09-14. Status: design approved in discussion, in the ScheduledReportA
 that owns the tunnel design. This document is the draft of record until the grounding pass in
 section 0.3 freezes it.
 
-Predecessors: `2026-09-08-container-wireguard-mode-design.md` in this repo (the spoke-side
-supervisor, tunnel and heartbeat this document changes) and
-`ScheduledReportAggregator/docs/superpowers/specs/2026-09-08-wireguard-db-access-design.md` (the
-tunnel-inside-the-app-container decision, the topology and the first-deploy checklist). Section 12
-lists what this document supersedes in each.
+Predecessor: `2026-09-08-container-wireguard-mode-design.md` in this repo (the spoke-side
+supervisor, tunnel and heartbeat this document changes); section 12 lists what this document
+supersedes in it. The ScheduledReportAggregator design of 2026-09-08 (the
+tunnel-inside-the-app-container decision, the topology and the first-deploy checklist) was
+deleted from that repository on 2026-09-14; everything from it that still applies is carried in
+sections 12 and 16 here.
 
 ## 0. How this document is used
 
@@ -761,13 +762,42 @@ section 6 and the `WG_*` lines and healthcheck rationale in section 8 are supers
 4, 5, 8 and 9 here; the handshake timeout's "refused start" in section 6 step 3 is superseded by
 5.3 and 5.4; the "No status file" decision stands.
 
-In `2026-09-08-wireguard-db-access-design.md` (ScheduledReportAggregator): section 5 steps 2 and 3
-(compose additions and Coolify values) are superseded by 9.2 and 10.1; section 6.1 (the hub as a
-`linuxserver/wireguard` container) by section 3; section 8 step 2 (Coolify passing `devices` and
-`sysctls`) becomes "passes `cap_add` for spokes, and `cap_add`, `sysctls` and `ports` for the
-hub"; section 8 step 4's status file by 5.7; section 9's "Final `WG_*` names" by section 8 here.
-Its section 3 address plan is confirmed by 11. That document is edited to say so when the
-ScheduledReportAggregator piece is implemented.
+The ScheduledReportAggregator design of 2026-09-08 was deleted on 2026-09-14 rather than edited.
+Its decisions that still stand, restated here so nothing depends on the deleted text:
+
+- **Constraints, all the owner's.** In-house end to end: no third-party overlay or tunnel service
+  in the data path. Every real user of the network has its own key pair and tunnel address, so
+  activity is attributable; no shared forwarder between apps. The database must not be reachable
+  by any other container on the `coolify` network. Coolify conventions hold: auto-deploy on
+  changes under `docker/**`, consistent container names, every container on the external
+  `coolify` network so `central-log-server` resolves. healthchecks.io and Pushover for every new
+  component, preferred not required.
+- **The tunnel lives inside the app container** (no sidecar, no relay, no extra Docker network),
+  and that decision is unchanged. Rejected there and still rejected: a sidecar sharing the app's
+  network namespace, a relay sidecar on a private network with DNAT, a relay reachable on
+  `coolify`, Cloudflare Tunnel, Tailscale-class overlays, and a userspace WireGuard forwarder.
+- **Topology.** Hub and spoke; every spoke talks only to the hub; spokes on the VPS use the hub's
+  public endpoint too, through Docker's hairpin path, with the per-peer `endpoint` override of 3.2
+  as the fallback. No DNS inside the tunnel: the database host is reached by its tunnel address.
+- **Security layers.** The hub's cryptokey routing and its `FORWARD` rules (3.3); the office PC's
+  firewall allowing the database port only from approved tunnel addresses; a read-only database
+  account for the app; private keys only in Coolify secrets or the gitignored local `.env`.
+- **The office PC** runs native WireGuard for Windows as a service, not Docker Desktop under WSL2,
+  so the tunnel is up before anyone logs in and the database port is directly reachable at the
+  PC's tunnel address. It needs only outbound UDP to the hub; no router port forward.
+- **The previous attempt's artefacts** are a cleanup list, not inputs: the workspace folders
+  `wireguard-test-sender`, `wireguard-vps-relay` and `wireguard-warehouse-client`, the
+  workspace-root `compose.test.yaml`, ScheduledReportAggregator's gitignored
+  `docker/wireguard/keys.env`, and the `SERVER_PUBLIC_KEY`, `SERVER_ENDPOINT` and
+  `TAXES_JOB_PRIVATE_KEY` entries in its `.env`. Key pairs from that attempt are retired, never
+  reused. ScheduledReportAggregator's tracked `docker/entrypoint.sh` and `docker/scripts/` are
+  leftovers of the shell entrypoint and are deleted with its migration (10.1).
+
+What that document promised and this one changes: `devices` and `sysctls` on spokes (only
+`cap_add`, per the predecessor in this repo); the `/run/devkit/wireguard.json` status file and an
+`aeth_ext` reader of it (the tunnel heartbeat file and the ping, 5.7); the hub as a
+`linuxserver/wireguard` container (section 3); the five peer environment variables and their
+Coolify values (sections 8 and 10.1); and its address plan, which section 11 confirms.
 
 ## 13. Tests
 
@@ -813,7 +843,7 @@ to stdin; the `/version` response; the heartbeat gating on the interface path.
    `pyproject.toml`, then `setup-project` against the release from step 2; first release with the
    owner's peer rows; deployed in Coolify with the domain attached.
 4. Spokes re-rendered and migrated per 10.1; the office PC per 10.2.
-5. The first-deploy checklist of the ScheduledReportAggregator document, with section 12's edits.
+5. The first-deploy checklist of section 16, in order.
 
 ## 15. TODO entries to record in this repo at implementation
 
@@ -825,10 +855,28 @@ to stdin; the `/version` response; the heartbeat gating on the interface path.
 - A thread-based consent helper in `aeth_ext` for non-async apps.
 - A data-plane probe (ping the hub's tunnel address each poll) as a second health signal.
 
-## 16. Host requirements, deltas
+## 16. Host requirements and the first-deploy checklist
 
-In addition to the predecessor's: the host kernel provides the netfilter modules `iptables` needs
-(`nf_tables` and the `xt_conntrack` match on bookworm's `iptables-nft`); Coolify passes `sysctls`
-and `ports` through for the hub; the Docker hairpin path works for both UDP 51820 and HTTPS 443 to
-the public name from a container on the same host. All three are first-deploy checks, and the
-per-peer `endpoint` override in 3.2 is the fallback for the hairpin.
+Host requirements, in addition to the predecessor's kernel WireGuard module: the host kernel
+provides the netfilter modules `iptables` needs (`nf_tables` and the `xt_conntrack` match on
+bookworm's `iptables-nft`); Coolify passes `sysctls` and `ports` through for the hub; the Docker
+hairpin path works for both UDP 51820 and HTTPS 443 to the public name from a container on the
+same host. The per-peer `endpoint` override in 3.2 is the fallback for the hairpin.
+
+First deploy, in this order, each a hard stop if it fails:
+
+1. Neither the office LAN nor the VPS uses `10.8.0.0/24`.
+2. `modprobe wireguard` succeeds on the VPS host, and the netfilter modules above are present.
+3. The hub deploys; `docker inspect` on its container shows `NET_ADMIN`, the forwarding sysctl and
+   the published UDP port passed through unchanged; `GET /version` over the public name answers
+   the hub's tag; the hub's heartbeat is fresh.
+4. The hub and the office PC handshake with each other before any app is involved.
+5. ScheduledReportAggregator's container fetches the bundle, handshakes with the hub at the public
+   endpoint (the hairpin check), and both of its heartbeat files are fresh; `docker inspect` shows
+   `cap_add` passed through.
+6. The test project runs its query against the database over the tunnel.
+7. A sibling container on the `coolify` network cannot reach the database port (negative test).
+8. The office PC's firewall rejects the database port from a tunnel address that is not approved.
+9. A hub release that changes nothing for the spoke is picked up within the version poll interval
+   with no re-apply logged; one that changes its keepalive is applied in place without the
+   interface going down.
