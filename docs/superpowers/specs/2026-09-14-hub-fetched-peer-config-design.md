@@ -175,6 +175,10 @@ Recorded so they are not reopened.
   name-resolution failure leaves a complete interface lacking only the endpoint.
 - **A failed `wg show` on an existing interface is Broken.** The interface is then in a state the
   supervisor cannot reason about; exiting with a named error beats repairing blindly.
+- **A plain log file as a placeholder for logging** (5.8). The binary has no logging system;
+  hooking it into `aeth_ext`'s is later work, recorded in this repo's todo. Until then its own
+  lines go to one dumb append-only file in the logs folder as well as to stderr, and a failed
+  version check while Connected is logged once per change of outcome, never per attempt.
 - **The smoke test fetches from real GitHub**, from a private fixture repository, with the test
   key pairs committed in the test source and one CI secret, the fixture token (13). Rejected: test-only override variables in the binary (a knob in
   production code, which anyone able to set could already outdo by setting the hub URL and the
@@ -570,8 +574,9 @@ give-up exits **75**, chosen as `EX_TEMPFAIL`, meaning a redeploy is the retry.
 
 While Connected, every `WG_VERSION_POLL_SECS`: query the version endpoint, on the worker thread of
 5.2 step 5; the fetch that may follow runs on the same thread, and the apply below happens inline
-at the poll that receives the result. Unreachable or invalid is logged at debug level and skipped;
-it is never a health signal while the tunnel is Connected. A tag equal to the applied bundle's
+at the poll that receives the result. Unreachable or invalid is skipped and is never a health
+signal while the tunnel is Connected; it is logged once when the checks start failing, with the
+error, and once when they succeed again, never per attempt (5.8). A tag equal to the applied bundle's
 `hub_version` is a no-op. A different tag: fetch and validate (4.2), select (4.3), write the cache
 (4.4), and compare the new effective configuration to the applied one. Equal: record the new tag
 as applied, done. Different: apply the difference in place, without bringing the interface down,
@@ -617,6 +622,18 @@ implicitly, like the cache folder of 4.4, so the tunnel heartbeat can be written
 poll on a fresh volume. During boot-time Disconnected the tunnel file does not exist yet, which
 the healthcheck reports as missing; the container turns unhealthy after the start period plus the
 retries, which is the intended alert path alongside the `/fail` ping.
+
+### 5.8 The binary's log file
+
+A placeholder until the binary logs through `aeth_ext` (this repo's todo), kept as simple as it
+can be. Every line the binary writes for itself from the tunnel step onward, the transitions,
+repairs, applied configurations, version-check outcome changes (5.5), consent asks and replies, is
+also appended to `/app/persisted_data/logs/devkit-container.log`, in the implicit logs folder
+(5.7), its own file beside the app's, each line prefixed with a timestamp. The same lines keep
+going to stderr, so the container log is unchanged. The file is opened for append on every line
+and closed again: nothing buffered, nothing rotated, nothing capped. It is created world-readable
+and handed to nonroot like the heartbeat file, so the folder stays uniformly owned. A line that
+cannot be written still reaches stderr and nothing else happens.
 
 ## 6. Shutdown consent
 
@@ -959,7 +976,8 @@ alternating repair of 5.6 and its two restart points, hold postponing, the hold 
 client against a fake socket: `ok`, `hold`, garbage, EOF, timeout, absent socket, refused
 connection. Startup script resolution, order, environment, failure. `scrub_env` and the built-in
 scrubs on both paths. The implicit folders of 4.4 and 5.7 created and chowned, and not part of
-the mount check. Mode detection and the refusals of 5.1.
+the mount check. The log file of 5.8: a line appended with its timestamp, the file created
+world-readable, a write failure ignored. Mode detection and the refusals of 5.1.
 
 **This repo, render.** Unchanged in shape: the two modes through the released devkit, now with
 the window markers in the template.
