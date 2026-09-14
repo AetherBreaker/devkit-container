@@ -175,8 +175,8 @@ Recorded so they are not reopened.
   name-resolution failure leaves a complete interface lacking only the endpoint.
 - **A failed `wg show` on an existing interface is Broken.** The interface is then in a state the
   supervisor cannot reason about; exiting with a named error beats repairing blindly.
-- **The smoke test fetches from real GitHub**, from a private fixture repository with a fixed test
-  key and two CI secrets (13). Rejected: test-only override variables in the binary (a knob in
+- **The smoke test fetches from real GitHub**, from a private fixture repository, with the test
+  key pairs committed in the test source and one CI secret, the fixture token (13). Rejected: test-only override variables in the binary (a knob in
   production code, which anyone able to set could already outdo by setting the hub URL and the
   private key); a local stand-in over TLS (the binary would have to trust the image's certificate
   store, and a stand-in encodes the same assumptions as the code it tests).
@@ -885,10 +885,13 @@ Reserved for the owner and answered in the grounding pass of 2026-09-14:
   owner when it expires. An expired token surfaces as `config unavailable` in the spoke's log
   and, if the hub changes meanwhile, as the tunnel going Disconnected.
 - **The smoke-test fixture:** repository `AetherBreaker/wireguard-hub-smoke`, private, holding two
-  releases whose `peers.toml` enrol the fixed test key at two addresses (13). Its token is a
-  second fine-grained token of the same shape, scoped to that repository only. The test reads the
-  key and the token from `DEVKIT_SMOKE_WG_PRIVATE_KEY` and `DEVKIT_SMOKE_WG_HUB_TOKEN`; CI holds
-  them as secrets under the same names.
+  releases whose `peers.toml` enrol the test spoke's public key at two addresses under the
+  fixture hub's public key (13). Its token is a second fine-grained token of the same shape,
+  scoped to that repository only. The two key pairs, the fixture hub's and the test spoke's, are
+  constants in the smoke test source: WireGuard keys match no provider pattern GitHub's secret
+  scanning knows, and each constant's line carries the `gitleaks:allow`, `trufflehog:ignore` and
+  `ggignore` markers with a comment that it guards nothing. The token is read from
+  `DEVKIT_SMOKE_WG_HUB_TOKEN`; CI holds it as a secret under the same name.
 - **Whether ScheduledReportAggregator adopts consent in the same change as its migration:** later,
   with the `aeth_ext` helper (6.4).
 - **Whether `wireguard-hub` runs with `supervise = true`:** no; 3.6 stands. A crashed hub exits
@@ -964,12 +967,12 @@ the window markers in the template.
 **This repo, smoke (Linux).** A hub container built from the test image running a minimal hub (the
 commands of 3.4 in shell are acceptable here) and serving `/version` from a small HTTP listener on
 the test network, reached through `WG_HUB_URL` over plain `http`. The bundle comes from real
-GitHub, from the fixture repository of section 11: two releases whose `peers.toml` enrol a fixed
-test key at two addresses, fetched with the fixture token. The test reads
-`DEVKIT_SMOKE_WG_PRIVATE_KEY` and `DEVKIT_SMOKE_WG_HUB_TOKEN` from its environment and refuses to
-run, naming them, when either is missing (it does not skip); CI provides them as secrets. A spoke
-built from the template in fetched mode with that key, and a second spoke with a freshly generated
-key. Asserts: boot fetch, Connected, both heartbeats fresh; the cache file exists at its path with
+GitHub, from the fixture repository of section 11: two releases whose `peers.toml` enrol the test
+spoke's public key at two addresses under the fixture hub's public key, fetched with the fixture
+token. Both key pairs are constants in the test source (section 11). The test reads
+`DEVKIT_SMOKE_WG_HUB_TOKEN` from its environment and refuses to run, naming it, when it is missing
+(it does not skip); CI provides it as a secret. A spoke built from the template in fetched mode
+with the test spoke's key, and a second spoke with a freshly generated key. Asserts: boot fetch, Connected, both heartbeats fresh; the cache file exists at its path with
 its mode and owner; the second spoke is Disconnected with `not enrolled` and its app is running;
 the hub removes the peer, the spoke goes Disconnected, the healthcheck names the tunnel file; with
 the limit set to seconds, the spoke asks, a participating test app (which speaks the protocol of
@@ -1000,7 +1003,7 @@ to stdin; the `/version` response; the heartbeat gating on the interface path an
    rendered anywhere and before the hub's first release.
 2. `devkit-container`: everything in sections 5 to 9. Backward compatible: a spoke rendered before
    this release keeps its old compose lines and runs in environment mode. Its fetched-mode smoke
-   test needs the fixture repository and the two secrets of section 11 in place first.
+   test needs the fixture repository and the secret of section 11 in place first.
 3. `wireguard-hub`: created with `gh repo create AetherBreaker/wireguard-hub --private`, a stub
    `pyproject.toml`, then `setup-project` against the releases from steps 1 and 2, the `peers`
    job, the compose additions and the window content written by hand (3.6); first release with
