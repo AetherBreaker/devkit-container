@@ -1,15 +1,7 @@
 # WireGuard hub, fetched peer configuration, startup scripts and shutdown consent
 
-Date: 2026-09-14. Status: design approved in discussion, in the ScheduledReportAggregator session
-that owns the tunnel design. This document is the draft of record until the grounding pass in
-section 0.3 freezes it.
-
-Predecessor: `2026-09-08-container-wireguard-mode-design.md` in this repo (the spoke-side
-supervisor, tunnel and heartbeat this document changes); section 12 lists what this document
-supersedes in it. The ScheduledReportAggregator design of 2026-09-08 (the
-tunnel-inside-the-app-container decision, the topology and the first-deploy checklist) was
-deleted from that repository on 2026-09-14; everything from it that still applies is carried in
-sections 12 and 16 here.
+Date: 2026-09-14. Status: frozen after the grounding pass of 2026-09-14 (section 0.3). A change
+from here needs the owner's explicit decision, recorded here first (rule 5 of 0.2).
 
 ## 0. How this document is used
 
@@ -24,13 +16,14 @@ against text that has gone stale. The dependency map:
 | Section | Implemented in | Depends on |
 | --- | --- | --- |
 | 3 The hub project | `wireguard-hub` (new repo) | 4, 7, 8, 9 |
+| 3.7 The kept release job | `aeth-devkit` (`setup-project`) and `devkit-templates` (the workflow header) | 3.2 |
 | 4 The bundle contract | `wireguard-hub` (producer) and this repo (consumer) | 3.2, 3.7 |
 | 5 Spoke behaviour | this repo (`run`) | 4, 8 |
-| 6 Shutdown consent | this repo (`run`) and `aeth_ext` | 5.4, 8 |
+| 6 Shutdown consent | this repo (`run`); the app-side helper is deferred (6.4) | 5.4, 8 |
 | 7 Startup scripts and `scrub_env` | this repo (`run`) | 8, 9 |
 | 8 Environment contract | this repo (README), every consumer | 5, 6, 7 |
 | 9 Templates and `[tool.docker]` | this repo (package data) | 3.6, 8, 10 |
-| 10 Consuming projects | ScheduledReportAggregator, the test project, the office PC | 4, 8, 9 |
+| 10 Consuming projects | ScheduledReportAggregator, `tunnel-probe`, the office PC | 4, 8, 9 |
 
 ### 0.2 Source of truth, and the stop-and-ask rule
 
@@ -54,11 +47,11 @@ largely unreviewed. They are not advisory.
 
 ### 0.3 Lifecycle
 
-1. Written in the ScheduledReportAggregator session and committed to this repo. This is that step.
-2. **Grounding pass.** A session in this repo re-reads the document against the actual code, with
-   the owner in the discussion. Every note marked *verify in grounding* is resolved and the marker
-   removed. Every decision reserved for the owner in section 11 is answered and written in. The
-   document is then frozen.
+1. Written and committed to this repo.
+2. **Grounding pass**, done 2026-09-14: a session in this repo re-read the document against the
+   actual code, with the owner in the discussion. Every note marked *verify in grounding* was
+   resolved and the marker removed; every decision reserved for the owner in section 11 was
+   answered or deferred and written in. The document is frozen from that point.
 3. The plan for this repo's piece is written (the writing-plans skill) and executed inline.
 4. The other repositories' pieces each get a plan from their own sections of this same document,
    in the release order of section 14. A change discovered during any piece is written back here
@@ -66,11 +59,11 @@ largely unreviewed. They are not advisory.
 
 ## 1. Summary
 
-A spoke no longer receives its peer configuration through five environment variables. It asks the
-hub which version is deployed, fetches that version's peer bundle from the hub's GitHub release,
-finds its own entry by public key, and configures its interface from that, injecting its private
-key over stdin as today. A running spoke re-checks the hub's version every five minutes and applies
-a changed configuration in place. The hub is a single devkit-managed Python project that brings up
+A spoke no longer receives its peer configuration through the environment. It asks the hub which
+version is deployed, fetches that version's peer bundle from the hub's GitHub release, finds its
+own entry by public key, and configures its interface from that, injecting its private key over
+stdin as today. A running spoke re-checks the hub's version every five minutes and applies a
+changed configuration in place. The hub is a single devkit-managed Python project that brings up
 its own interface as root in a startup script the entrypoint runs before dropping privileges, then
 serves its version string and writes a heartbeat as an ordinary unprivileged app. The hub's
 committed peer table is the single source for both sides: the hub configures itself from it at
@@ -99,7 +92,7 @@ bundle, and renders one human-readable `.conf` per peer for peers that are not c
 
 ## 2. Decisions taken, and what was rejected
 
-Recorded so the grounding pass does not reopen them.
+Recorded so they are not reopened.
 
 - **The hub owns both sides of every peering.** Its committed peer table plus a `[hub]` section is
   the only hand-edited input; the spoke's whole configuration except its private key derives from
@@ -134,33 +127,61 @@ Recorded so the grounding pass does not reopen them.
   calls out of Python); the Python app dropping privileges itself (needs a "run the app as root"
   switch in the binary, a standing footgun); the entrypoint supervising the wireguard image
   (breaks every devkit Docker assumption at once).
+- **The hub's asset job is a job of the hub's own, kept inside `release.yml` by `setup-project`**
+  through the new `[tool.devkit].release-workflow-jobs` key (3.7). Rejected: a second workflow file
+  (the release command waits only for `release.yml`, so the tag could be deployed before the bundle
+  is attached, and the file would duplicate the standard workflow's guards); opting the hub out of
+  the devkit release workflow (it would drift from the standard).
 - **Startup scripts as a generic feature, minimal surface.** One ordered list of console script
   names, run as root, no arguments, no timeout, nonzero exit ends the container. `scrub_env`
   generalises the private-key scrubbing. Neither key is added to the pyproject template.
 - **Health model: Broken, Disconnected, Connected.** Local failure exits at once; a missing hub
   makes the container unhealthy and alerting but running; 30 minutes of continuous disconnection
-  triggers a shutdown. The app starts as soon as the local bring-up succeeds, without waiting for
-  the first handshake, because most of a spoke's work does not need the tunnel and the runtime
-  model already accepts running with the hub down. Rejected: holding the app for the first
-  handshake; exiting after 60 s as today.
+  triggers a shutdown. The app starts as soon as the local bring-up and the bounded boot fetch
+  (5.2) are done, without waiting for the first handshake, because most of a spoke's work does
+  not need the tunnel and the runtime model already accepts running with the hub down. Rejected:
+  holding the app for the first handshake; exiting after 60 s as today; a tunnel status file for
+  the app to read (the heartbeat file and the ping already carry the state).
 - **`restart: no` stays.** A hub outage longer than 30 minutes stops every spoke until it is
   redeployed. Chosen for an unambiguous state; the owner accepted the manual redeploy.
 - **Shutdown consent over a Unix socket the app opens if it participates.** Non-participation is
   indistinguishable from "go ahead", so no existing app changes. No upper bound on holding by
-  default; a knob exists. Rejected: two timestamp files (the app cannot learn a shutdown is pending
-  without polling); loopback TCP (works on Windows dev boxes, but the supervisor never runs there).
+  default; a knob exists. The supervisor's side ships now; the app-side helper in `aeth_ext` is
+  deferred (6.4), which costs nothing because non-participation reads as consent. Rejected: two
+  timestamp files (the app cannot learn a shutdown is pending without polling); loopback TCP
+  (works on Windows dev boxes, but the supervisor never runs there).
 - **Version polling every five minutes with in-place re-apply.** Closes the case where a hub
   release changes a spoke's address: the handshake stays fresh while the hub drops the spoke's
   data, so nothing else would ever re-fetch. Rejected: re-fetch only during repair; a data-plane
   probe (adds little once polling exists).
-- **Cached last-good bundle in persisted data.** Lets a spoke reach Connected when GitHub is down
-  but the hub is not. The bundle holds no secrets.
+- **Cached last-good bundle in persisted data**, in a folder of the entrypoint's own (4.4). Lets a
+  spoke reach Connected when GitHub is down but the hub is not. The bundle holds no secrets.
+- **The supervisor never waits on the network or on the app inside its loop.** The version check
+  with its fetch, and the consent ask, each run on a worker thread, one of each in flight, and the
+  loop acts on the result at the poll after the thread completes; the loop wakes at once on a
+  signal or on the child's exit, and otherwise every 250 ms; the one inline network wait is the
+  bounded boot fetch (5.2). Rejected: an async runtime in the binary (the HTTP, socket and
+  subprocess calls are blocking and would run on worker threads underneath anyway, and PID 1's
+  reaping of every orphan stays hand-written either way).
+- **The repair while Disconnected alternates** the endpoint re-set with the interface
+  down-and-up (5.6), and the endpoint is the last command of every apply (5.2), so a
+  name-resolution failure leaves a complete interface lacking only the endpoint.
+- **A failed `wg show` on an existing interface is Broken.** The interface is then in a state the
+  supervisor cannot reason about; exiting with a named error beats repairing blindly.
+- **The smoke test fetches from real GitHub**, from a private fixture repository with a fixed test
+  key and two CI secrets (13). Rejected: test-only override variables in the binary (a knob in
+  production code, which anyone able to set could already outdo by setting the hub URL and the
+  private key); a local stand-in over TLS (the binary would have to trust the image's certificate
+  store, and a stand-in encodes the same assumptions as the code it tests).
+- **The database flow rules are the next phase's.** `rules.v4` ships with the policy lines only
+  (3.3); the per-flow lines, the office PC's firewall rule and `tunnel-probe`'s query follow once
+  the engine, port and protocol are decided (section 11).
 - **Environment rendering rule.** A variable is rendered into the compose template only if at
   least one app will set it at first deployment. Everything else is documented, not rendered.
 - **Out of scope, recorded as TODO at implementation** (section 15): a per-project conf file
   source; preshared keys in fetched mode; generating the firewall rules from the peer table; a
-  thread-based consent helper; a data-plane probe. A hub mode in the binary is dropped, not
-  deferred.
+  data-plane probe. The `aeth_ext` consent helper, async and thread-based, is recorded in
+  `aeth_ext`'s own TODO (6.4). A hub mode in the binary is dropped, not deferred.
 
 ## 3. The hub project: `wireguard-hub`
 
@@ -215,7 +236,7 @@ address = "10.8.0.20/32"
 # persistent_keepalive = 25
 
 [[peers]]
-name = "<test project name>"
+name = "tunnel-probe"
 public_key = "<base64>"
 address = "10.8.0.21/32"
 ```
@@ -233,13 +254,16 @@ CIDR with a host part; `endpoint` (hub and overrides) `host:port` with `port` in
 
 ### 3.3 `rules.v4`
 
-An `iptables-restore` file for the `filter` table, applied whole by the startup script. Policy:
-`FORWARD DROP`; accept `ESTABLISHED,RELATED` on `wg0` to `wg0`; one `ACCEPT` line per permitted
-flow, from a spoke's `/32` to the database PC's `/32` on the database port and protocol. Tunnel
-addresses in this file duplicate `peers.toml`; that is accepted for this spec, and a hub test
-asserts every address in `rules.v4` is an address in `peers.toml`. Generating the rules from the
-table is a TODO (section 15). The `INPUT` chain is not touched: Docker publishes the UDP port and
-the container's default `INPUT` policy accepts.
+An `iptables-restore` file for the `filter` table, applied whole by the startup script. In this
+document it holds the policy only: `FORWARD DROP`, and accept `ESTABLISHED,RELATED` on `wg0` to
+`wg0`. The per-flow `ACCEPT` lines, one per permitted flow from a spoke's `/32` to the database
+PC's `/32` on the database port and protocol, are the next phase's, once the engine, port and
+protocol are decided (section 11); the file's shape is fixed now so that phase adds lines, not
+structure. Tunnel addresses in this file duplicate `peers.toml`; that is accepted for this spec,
+and a hub test asserts every address in `rules.v4` is an address in `peers.toml` (trivially true
+while it holds none). Generating the rules from the table is a TODO (section 15). The `INPUT`
+chain is not touched: Docker publishes the UDP port and the container's default `INPUT` policy
+accepts.
 
 ### 3.4 The startup script `wireguard-hub-up`
 
@@ -267,11 +291,16 @@ with argument lists, never a shell string.
   `GET /version` answers `200`, `Content-Type: text/plain; charset=utf-8`, body
   `v<package version>\n` where the package version comes from `importlib.metadata` and the `v`
   prefix matches the devkit release tag. Every other path answers `404`. No other routes.
-- The heartbeat, written with `aeth_ext`'s existing helper to `/app/persisted_data/logs/heartbeat.txt`
-  every 60 s, but only while `/sys/class/net/wg0` exists. An interface that vanished stops the
-  beats, the standard healthcheck turns unhealthy, and healthchecks.io alerts through the
-  standard ping. The app cannot inspect handshakes (`wg show` needs `NET_ADMIN`); reachability of
-  the hub is what the spokes' own health reports.
+- The heartbeat, written every 60 s to `/app/persisted_data/logs/heartbeat.txt` with `aeth_ext`'s
+  one-shot `send_heartbeat`, called from the app's own loop, but only while `/sys/class/net/wg0`
+  exists. The one-shot call is used because `aeth_ext`'s scheduled helpers
+  (`run_heartbeat_async`, `HeartbeatThread`) cannot pause while the interface is gone. The
+  one-shot call also does not know about a supervisor owning the ping, so the loop passes the
+  ping key and slug only when `DEVKIT_SUPERVISED_PING` is unset; with `supervise = false` (3.6)
+  that is always. An interface that vanished stops the beats, the standard healthcheck turns
+  unhealthy, and healthchecks.io alerts through the standard ping. The app cannot inspect
+  handshakes (`wg show` needs `NET_ADMIN`); reachability of the hub is what the spokes' own health
+  reports.
 - Shutdown on SIGINT/SIGTERM. Nothing else.
 
 ### 3.6 `pyproject.toml` and compose
@@ -285,6 +314,9 @@ wireguard               = false
 wireguard_hub           = true
 startup_scripts         = ["wireguard-hub-up"]
 scrub_env               = ["WG_HUB_PRIVATE_KEY"]
+
+[tool.devkit]
+release-workflow-jobs   = ["peers"]
 ```
 
 `setup-project` renders, from the template blocks in section 9: `cap_add: [NET_ADMIN]`,
@@ -296,12 +328,30 @@ provides the Traefik route and the certificate; the UDP port is published direct
 never passes through Traefik. Environment values: `WG_HUB_PRIVATE_KEY`, plus the standard
 `PINGKEY` and alert values every project has.
 
-### 3.7 Release
+### 3.7 Release, and the kept job in `release.yml`
 
-The devkit release command is used unchanged. The repository's release workflow gains one job
-that runs after the tag exists: validate `peers.toml` (3.2), write a copy with
-`hub_version = "<tag>"` inserted as the first top-level key, and render `<peer name>.conf` for
-every peer:
+The devkit release command is used unchanged. The validation, stamping, rendering and attaching
+happen in a job of the hub's own inside `.github/workflows/release.yml`, the file `setup-project`
+otherwise owns and rewrites on every run. To keep it there, `setup-project` gains one setting,
+implemented in `aeth-devkit` with its header line in `devkit-templates`:
+
+- `[tool.devkit].release-workflow-jobs`: a list of job names. When `setup-project` re-renders
+  `release.yml`, it copies each named job's block out of the existing file and splices it into the
+  rendered file under `jobs`, after the template's own jobs, and reports the kept jobs in its
+  change log. A named job the existing file does not hold is reported, not an error, so the first
+  run before the job is written passes. The key joins `[tool.devkit]`'s known keys, so an unknown
+  key stays an error.
+- The template's header line "edits are replaced on the next run" gains "except the jobs named in
+  `[tool.devkit].release-workflow-jobs`".
+- Nothing else in `setup-project` or in the release command changes. The release command watches
+  the whole run, so it waits for the kept job as it waits for the others: the bundle is attached
+  before the release command reports success, and before any pin or redeploy that follows it.
+
+The hub's job is named `peers`. It runs on the same release event, carries its own
+`permissions: contents: write` as the publish job does, guards as the publish job does (checks out
+`github.sha`, and verifies the release still owns the tag before uploading), validates
+`peers.toml` (3.2), writes a copy with `hub_version = "<tag>"` inserted as the first top-level
+key, and renders `<peer name>.conf` for every peer:
 
 ```ini
 [Interface]
@@ -316,15 +366,17 @@ PersistentKeepalive = <peer override, else hub default>
 ```
 
 All of these are attached to the GitHub release as assets: `peers.toml` and one `.conf` per peer.
-The job fails the release if validation fails. Every push also runs the validation in CI, so a
-broken table is caught before a release is attempted.
+The job fails the run if validation fails. Since it runs beside the publish job, a failure can
+land after the wheel is published, the same exposure a publish failure has today; that is why
+every push also runs the validation in the hub's hand-written `ci.yml` (devkit has no CI
+template), so a broken table is caught before a release is attempted.
 
 ### 3.8 Enrolling a peer
 
 A spoke logs its derived public key at every start (existing behaviour). Enrolment is: add a
 `[[peers]]` row with that key and the next address from the plan, add the flow to `rules.v4` if the
-peer may reach the database, release the hub. Running spokes pick the change up within the
-version poll interval (5.5). Nothing on the spoke changes.
+peer may reach the database (next phase, 3.3), release the hub. Running spokes pick the change up
+within the version poll interval (5.5). Nothing on the spoke changes.
 
 ## 4. The bundle contract
 
@@ -363,8 +415,14 @@ The body is capped at 1 MiB and parsed as TOML; then validated as in 3.2 plus: `
 present and equals the tag requested. Any failure at any step is "config unavailable" for section
 5, never Broken. Failures name the step and the HTTP status; never the token, never the body.
 
-*Verify in grounding:* whether the binary's HTTP client can disable redirects per request and
-whether a JSON parser is already a dependency; if not, the plan adds one, pinned.
+The binary's HTTP client (`ureq`, already a Linux-only dependency) takes per-request settings, and
+with redirects disabled a 302 comes back as an ordinary response, so step 3 works as written. The
+client also strips `Authorization` by itself on any redirect it follows; step 4 stays explicit
+because it is what the unit test asserts (13). Reading the release listing needs a JSON reader:
+`serde_json`, today a test-only dependency, becomes a Linux-only runtime dependency at the version
+the lock already holds, used through its untyped value API, with no derived types. The two GitHub
+hosts are the fetch code's ordinary inputs, so a test can point them at a local listener without
+any environment variable existing for it.
 
 ### 4.3 Selecting the entry and the effective configuration
 
@@ -386,24 +444,30 @@ as sets.
 
 ### 4.4 The cache
 
-After every successful fetch and validation, the bundle is written atomically, mode 0644, to
-`/app/persisted_data/logs/wireguard-peers.toml`, beside the heartbeat files, because that
-directory is the bind mount every spoke already has. At boot, when the version endpoint or the
-fetch fails, the cache is read and validated (3.2) and, if it holds an entry for this spoke, used
-as the configuration, logged as `using cached bundle <hub_version>`. A fresh fetch always wins over
-the cache. A cache that fails validation is ignored and overwritten by the next successful fetch.
+After every successful fetch and validation, the bundle is written to
+`/app/persisted_data/wireguard/peers.toml`: atomically, mode 0644, owned by 999:999 like everything
+under `persisted_data`. The folder `persisted_data/wireguard` is the entrypoint's own: with
+`wireguard = true` it is created and chowned in the same pass as the `required_persisted_dirs`
+entries, without appearing in that key, and it is not part of the mount check, since a cache that
+turns out unbacked still works and merely does not outlive the container. Every write is best
+effort: a failure is one log line and never a health signal. The bundle fetched at boot is held in
+memory and written right after `prepare` (5.2 step 4), once the folder exists; runtime writes go
+straight there. At boot, when the version endpoint or the fetch fails, the cache is read and
+validated (3.2) and, if it holds an entry for this spoke, used as the configuration, logged as
+`using cached bundle <hub_version>`. A fresh fetch always wins over the cache. A cache that fails
+validation is ignored and overwritten by the next successful fetch.
 
 ## 5. Spoke behaviour in `devkit-container run`
 
 Changes to the supervisor's wireguard mode. Depends on sections 4 and 8. Everything not mentioned
 here (the poll, the tunnel heartbeat file, the healthcheck subcommand, the ping and its ownership,
-`HEARTBEAT_SLUG`, the privilege drop, signal forwarding, zombie reaping) is unchanged from the
-predecessor spec.
+`HEARTBEAT_SLUG`, the privilege drop, signal forwarding, zombie reaping) is unchanged from what
+the binary does today, as the README describes.
 
 ### 5.1 Modes
 
 `WG_HUB_URL` present means **fetched mode** (this document). Absent means **environment mode**,
-the predecessor's contract with `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_PEER_ENDPOINT`,
+the existing contract with `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_PEER_ENDPOINT`,
 `WG_PEER_ALLOWED_IPS`, `WG_PEER_PRESHARED_KEY` and `WG_PERSISTENT_KEEPALIVE`, kept for projects
 that have not migrated. `WG_HUB_URL` together with any of those six is refused at start, naming
 the conflicting variable. `WG_HUB_REPO` is required in fetched mode; `WG_HUB_TOKEN` is optional to
@@ -413,29 +477,43 @@ modes; version polling and the cache apply in fetched mode only.
 ### 5.2 Boot sequence, fetched mode
 
 Root check, `pyproject.toml`, resolution of the run script and the startup scripts, and the mount
-check, as today. Then:
+check, as today; then the ping is configured (5.4), before the tunnel, so a Broken at boot can
+send `/fail`. Then:
 
 1. Preflight (`wg`, `ip` on PATH), `ip link add dev wg0 type wireguard`, `wg set wg0 private-key`
    over stdin, log the derived public key. A failure here is **Broken** (5.3).
 2. Obtain a configuration: version endpoint (4.1), then fetch (4.2), then select (4.3). On any
    failure, the cache (4.4). On no usable configuration, continue with none; the tunnel state is
-   Disconnected with reason `config unavailable` or `not enrolled`.
-3. If a configuration was obtained, apply it: `wg set wg0 peer <hub key> endpoint <endpoint>
-   allowed-ips <cidrs> persistent-keepalive <n>`, `ip address add <address> dev wg0`,
-   `ip link set up dev wg0`, one `ip route replace <cidr> dev wg0` per allowed IP. Classification
-   of failures per 5.3.
-4. `prepare`, startup scripts (none for a spoke unless declared), scrubbing, privilege drop, spawn
-   the app. **The app starts here regardless of tunnel state.**
-5. Enter the poll loop (5.4) with the disconnected clock at zero and the boot-alert timer running.
+   Disconnected with reason `config unavailable` or `not enrolled`. This boot fetch is the one
+   network wait done inline: it is bounded by the request timeouts of 4.1 and 4.2 (at most four
+   requests of 10 s each), and it happens before the app exists so that a Broken apply in step 3
+   never has an app to stop.
+3. If a configuration was obtained, apply it, in this order: `wg set wg0 peer <hub key>
+   allowed-ips <cidrs> persistent-keepalive <n>`; `ip address add <address> dev wg0`;
+   `ip link set up dev wg0`; one `ip route replace <cidr> dev wg0` per allowed IP; last,
+   `wg set wg0 peer <hub key> endpoint <endpoint>`. The endpoint is the last command of every
+   apply (here, in 5.5 and in the re-up of 5.6) because it is the one command that resolves a
+   name: a DNS failure then leaves a complete interface lacking only the endpoint, and the repair
+   is exactly a re-set. Classification of failures per 5.3.
+4. `prepare`, which also creates and chowns the implicit folders `persisted_data/wireguard` (4.4)
+   and `persisted_data/logs` (5.7); the cache write of the bundle held from step 2, if step 2
+   fetched one; startup scripts (none for a spoke unless declared); scrubbing; privilege drop;
+   spawn the app. **The app starts here regardless of tunnel state.**
+5. Enter the poll loop with the disconnected clock at zero and the boot-alert timer running. The
+   loop wakes at once on a signal or on the child's exit, and otherwise every 250 ms. It never
+   waits on the network or on the app: the version check with its fetch (5.5, 5.6) and the
+   consent ask (6.3) each run on a worker thread, one of each in flight at a time, and the loop
+   acts on the result at the first poll after the thread completes. The local `wg` and `ip`
+   commands run inline, as today.
 
 ### 5.3 The three states, and classification
 
 Evaluated every poll. Every transition is logged with its reason.
 
-- **Broken.** A local operation failed: the interface cannot be created, a key, address or route is
-  rejected by the kernel, a tool is missing, a startup script failed. Never the hub. The supervisor
-  brings the interface down, sends `/fail` with the error (best effort), and exits 1 with an
-  `error:` line naming the failing command. Immediate, no retry.
+- **Broken.** A local operation failed: the interface cannot be created or queried, a key, address
+  or route is rejected by the kernel, a tool is missing, a startup script failed. Never the hub.
+  The supervisor brings the interface down, sends `/fail` with the error (best effort), and exits
+  1 with an `error:` line naming the failing command. Immediate, no retry.
 - **Disconnected.** The interface exists and holds the private key, but there is no fresh handshake
   (older than `WG_STALE_SECS`, or none), or no configuration has been obtained. The tunnel
   heartbeat is not written, so Docker turns unhealthy. Repairs run every poll (5.6). The
@@ -453,7 +531,8 @@ Evaluated every poll. Every transition is logged with its reason.
 | a startup script exits nonzero | exit 1 before the app is spawned, naming the script and its code |
 
 A single `wg set` invocation that sets the endpoint together with other fields is split so that the
-endpoint is its own command; otherwise a DNS failure could not be told from a local one.
+endpoint is its own command, and that command is the last of every apply (5.2 step 3); otherwise a
+DNS failure could not be told from a local one.
 
 ### 5.4 Timers, alerts and exit codes
 
@@ -476,19 +555,22 @@ give-up exits **75**, chosen as `EX_TEMPFAIL`, meaning a redeploy is the retry.
 
 ### 5.5 Version polling and in-place re-apply (fetched mode)
 
-While Connected, every `WG_VERSION_POLL_SECS`: query the version endpoint. Unreachable or invalid
-is logged at debug level and skipped; it is never a health signal while the tunnel is Connected.
-A tag equal to the applied bundle's `hub_version` is a no-op. A different tag: fetch and validate
-(4.2), select (4.3), write the cache (4.4), and compare the new effective configuration to the
-applied one. Equal: record the new tag as applied, done. Different: apply the difference in place,
-without bringing the interface down, so nothing in flight is disturbed:
+While Connected, every `WG_VERSION_POLL_SECS`: query the version endpoint, on the worker thread of
+5.2 step 5; the fetch that may follow runs on the same thread, and the apply below happens inline
+at the poll that receives the result. Unreachable or invalid is logged at debug level and skipped;
+it is never a health signal while the tunnel is Connected. A tag equal to the applied bundle's
+`hub_version` is a no-op. A different tag: fetch and validate (4.2), select (4.3), write the cache
+(4.4), and compare the new effective configuration to the applied one. Equal: record the new tag
+as applied, done. Different: apply the difference in place, without bringing the interface down,
+so nothing in flight is disturbed, in the table's order, the endpoint last:
 
 | Changed | Commands |
 | --- | --- |
-| hub public key | `wg set wg0 peer <old key> remove`; then a full `wg set wg0 peer <new key> ...` with endpoint, allowed IPs and keepalive |
-| endpoint, allowed IPs, keepalive (key unchanged) | `wg set wg0 peer <key> ...` with the changed fields; `allowed-ips` is given as the full new set |
+| hub public key | `wg set wg0 peer <old key> remove`; `wg set wg0 peer <new key> allowed-ips <cidrs> persistent-keepalive <n>`; then the endpoint row |
+| allowed IPs, keepalive (key unchanged) | `wg set wg0 peer <key> ...` with the changed fields; `allowed-ips` is given as the full new set |
 | address | `ip address replace <new> dev wg0`; `ip address delete <old> dev wg0` |
 | allowed IPs (routes) | `ip route replace <cidr> dev wg0` for each added CIDR; `ip route delete <cidr> dev wg0` for each removed |
+| endpoint, or a new hub key | `wg set wg0 peer <key> endpoint <endpoint>`, after every other row |
 
 Failures classify per 5.3. On success the new tag and configuration are the applied ones and the
 change is logged field by field, never printing keys beyond their first eight characters.
@@ -501,23 +583,32 @@ next poll:
 1. If no configuration is applied, or the reason is `config unavailable` or `not enrolled`: try to
    obtain one (4.1 to 4.4) and apply it. In fetched mode with a configuration already applied,
    also query the version endpoint; a new tag is fetched and applied exactly as in 5.5, because
-   a hub change is a common cause of disconnection.
-2. Otherwise alternate as today: on the first Disconnected poll after a Connected one, re-set the
-   endpoint (re-resolving DNS); on the next, bring `wg0` down and up with the applied
-   configuration; then alternate. Every re-up is logged.
+   a hub change is a common cause of disconnection. Both run on the worker thread of 5.2 step 5,
+   one attempt in flight; the apply happens inline at the poll that receives the result.
+2. Otherwise alternate: on the first Disconnected poll after a Connected one, re-set the endpoint
+   (`wg set wg0 peer <key> endpoint <endpoint>`, which re-resolves the name and leaves the
+   interface running); on the next, bring `wg0` down and up with the applied configuration (the
+   apply of 5.2 step 3, the endpoint last); then the endpoint again, then down and up, alternating.
+   Every re-up is logged. The sequence starts over at the endpoint re-set after every Connected
+   poll and after a configuration is applied by step 1.
 
-The clock is not reset by a repair attempt, only by Connected.
+The clock is not reset by a repair attempt, only by Connected. The repair never runs on a
+Connected tunnel.
 
 ### 5.7 What the healthcheck sees
 
 Unchanged: `devkit-container healthcheck --file heartbeat.txt --file wireguard-heartbeat.txt`
-with the 180 s threshold and the 90 s start period. During boot-time Disconnected the tunnel file
-does not exist yet, which the healthcheck reports as missing; the container turns unhealthy after
-the start period plus the retries, which is the intended alert path alongside the `/fail` ping.
+with the 180 s threshold and the 90 s start period. `persisted_data/logs`, where both files live,
+is created and chowned by `prepare` whenever the supervisor runs (`supervise` or `wireguard` on),
+implicitly, like the cache folder of 4.4, so the tunnel heartbeat can be written from the first
+poll on a fresh volume. During boot-time Disconnected the tunnel file does not exist yet, which
+the healthcheck reports as missing; the container turns unhealthy after the start period plus the
+retries, which is the intended alert path alongside the `/fail` ping.
 
 ## 6. Shutdown consent
 
-Depends on 5.4 and section 8. Implemented in this repo's supervisor and in `aeth_ext`.
+Depends on 5.4 and section 8. Implemented in this repo's supervisor; the app-side helper is
+deferred (6.4).
 
 ### 6.1 When
 
@@ -537,43 +628,47 @@ triggered.
 - The supervisor treats each of these as `ok`: connection refused, no socket file, any error,
   end of stream without a line, any line other than `hold`, and no reply within 60 s. Only a
   literal `hold` postpones.
+- The ask runs on the worker thread of 5.2 step 5; the loop reads the reply at the first poll
+  after it arrives or times out.
 
 ### 6.3 The supervisor's loop while shutdown is pending
 
 Each poll still runs the repair of 5.6 first; Connected cancels the pending shutdown and the loop
-returns to normal. Otherwise: the first ask happens on the poll where the clock crosses the limit,
-after that poll's repair fails. Subsequent asks happen 60 s after the previous reply or timeout,
-so at most one ask is outstanding. A `hold` postpones to the next ask. With `WG_HOLD_LIMIT_SECS`
-above zero, measured from the first ask, exceeding it proceeds without asking again, logged.
+returns to normal. Otherwise: the first ask is started on the poll where the clock crosses the
+limit, after that poll's repair fails, and its reply is read at a later poll. Subsequent asks
+happen 60 s after the previous reply or timeout, so at most one ask is outstanding. A `hold`
+postpones to the next ask. With `WG_HOLD_LIMIT_SECS` above zero, measured from the first ask,
+exceeding it proceeds without asking again, logged.
 
 Proceeding: send SIGINT to the app; wait up to 30 s for it to exit; SIGKILL if it has not; bring
 `wg0` down; send `/fail` per 5.4; exit 75.
 
-### 6.4 The `aeth_ext` helper
+### 6.4 The app-side helper: deferred
 
-A module under `aeth_ext.monitoring` (name settled in grounding) providing:
+The `aeth_ext` helper that lets an app participate is out of this document's scope and is not a
+blocker for it: the supervisor's side works unchanged against an app that never opens the socket.
+Its rough shape is recorded in `aeth_ext`'s `TODO.md` when this document is frozen, so the
+protocol of 6.2 is what it will implement:
 
-- `ShutdownConsent.start()`: a no-op, returning `False`, unless `DEVKIT_CONSENT_SOCKET` is set in
-  the environment. When set, it also requires `asyncio.start_unix_server` to exist; if it does not,
-  it logs one warning and returns `False`. Otherwise it removes any stale socket file at the path,
-  starts a Unix server there, and returns `True`.
-- `async with consent.busy():` increments a counter for the duration of the block.
-- `consent.on_request(callback)`: an optional callback receiving the reason string, returning
-  `True` to hold or `False` to allow; it may also start draining (stop accepting new work).
-- Reply logic per request: `hold` if the counter is above zero or the callback returned `True`;
-  else `ok`. Malformed requests are answered `ok`. The server never raises into the app.
-- `stop()` closes the server and removes the socket file.
+- a module `aeth_ext.monitoring.consent`, exported from `aeth_ext.monitoring` like its siblings,
+  providing `ShutdownConsent`; `start()` is a no-op returning `False` unless `DEVKIT_CONSENT_SOCKET`
+  is set, and also when `asyncio.start_unix_server` does not exist (one warning logged);
+  otherwise it removes a stale socket file at the path, starts a Unix server there and returns
+  `True`;
+- `async with consent.busy():` counting work in progress for the duration of the block;
+  `consent.on_request(callback)`, an optional callback receiving the reason string and returning
+  `True` to hold or `False` to allow, which may also start draining (stop accepting new work);
+- reply logic per request: `hold` if the counter is above zero or the callback returned `True`,
+  else `ok`; malformed requests answered `ok`; the server never raises into the app; `stop()`
+  closes the server and removes the socket file;
+- Windows and unsupervised runs are the no-op path by construction: `socket.AF_UNIX`,
+  `asyncio.start_unix_server` and `asyncio.open_unix_connection` do not exist on Windows
+  (verified 2026-09-14 with CPython 3.14.5), the helper never touches them unless the variable is
+  set, and only the supervisor sets it, in Linux containers;
+- a thread-based variant for `HeartbeatThread`-style apps.
 
-Async only in this spec; a thread-based variant for `HeartbeatThread`-style apps is a TODO
-(section 15).
-
-### 6.5 Windows and unsupervised runs
-
-Verified on 2026-09-14 with CPython 3.14.5 on Windows: `socket.AF_UNIX`, `asyncio.start_unix_server`
-and `asyncio.open_unix_connection` do not exist. The helper never touches them unless the variable
-is set, and the variable is set only by the supervisor, which runs only in Linux containers. Every
-Windows run and every unsupervised Linux run is therefore the no-op path. The supervisor's client
-side lives in the existing Unix-only compiled code, so the Windows wheel is unaffected.
+The supervisor's client side lives in the Linux-only compiled code, so the Windows wheel is
+unaffected either way.
 
 ## 7. Startup scripts and `scrub_env`
 
@@ -588,11 +683,13 @@ Generic features of `run`, added for the hub and kept minimal. Depends on sectio
   the binary exits 1 with `error: startup script <name> exited <code>` (or the signal).
 - `[tool.docker].scrub_env`: a list of variable names removed from the app's environment before
   spawn, after the startup scripts have run. Default empty. The built-in scrubbing of
-  `WG_PRIVATE_KEY`, `WG_PEER_PRESHARED_KEY` and `WG_HUB_TOKEN` is unconditional and additional.
+  `WG_PRIVATE_KEY`, `WG_PEER_PRESHARED_KEY` and `WG_HUB_TOKEN` is unconditional and additional,
+  on the spawn and the exec path alike.
 - Both keys are read only by the binary and are available to template gates through `keys()`.
   Neither is added to the pyproject template (section 2, rendering rule).
 - Order of `run`, complete: root check; `pyproject.toml`; resolve run script and startup scripts;
-  mount check; tunnel (5.2 steps 1 to 3, spoke modes only); `prepare`; startup scripts; scrub;
+  mount check; configure the ping (5.4); tunnel (5.2 steps 1 to 3, spoke modes only); `prepare`,
+  including the implicit folders (4.4, 5.7); the boot cache write (4.4); startup scripts; scrub;
   drop; spawn or exec the app.
 
 ## 8. Environment contract
@@ -606,7 +703,7 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_PRIVATE_KEY` | spoke | yes | | `${WG_PRIVATE_KEY:?}` | yes |
 | `WG_HUB_URL` | spoke | fetched mode | | `${WG_HUB_URL:?}` | no |
 | `WG_HUB_REPO` | spoke | fetched mode | | `${WG_HUB_REPO:?}` | no |
-| `WG_HUB_TOKEN` | spoke | no (private repo needs it) | | `${WG_HUB_TOKEN:?}` | yes |
+| `WG_HUB_TOKEN` | spoke | by the rendered compose file; the binary accepts its absence (4.2) | | `${WG_HUB_TOKEN:?}` | yes |
 | `WG_POLL_SECS` | spoke | no | 30 | no | no |
 | `WG_STALE_SECS` | spoke | no | 180 | no | no |
 | `WG_HANDSHAKE_ALERT_SECS` | spoke | no | 60 | no | no |
@@ -626,10 +723,8 @@ Format rules: `WG_HUB_REPO` is `owner/repo`; `WG_HUB_URL` per 4.1; every `*_SECS
 least 1 except `WG_HOLD_LIMIT_SECS`, which accepts 0. Empty is unset, as today. A failure names the
 variable, never its value.
 
-A test-only override, `DEVKIT_GITHUB_API_BASE` and `DEVKIT_GITHUB_BASE`, redirects the two GitHub
-hosts of 4.2 to a local stand-in for the smoke tests. Undocumented in the README, never rendered,
-refused when the process is not running the smoke test harness (*verify in grounding:* how the
-harness identifies itself).
+No test-only variable exists: the smoke test fetches from real GitHub (13), and the unit test of
+the fetch passes its listener's address to the fetch code directly (4.2).
 
 ## 9. Templates and the `[tool.docker]` schema
 
@@ -659,7 +754,10 @@ The spoke's environment block becomes:
     # !end
 ```
 
-and the capability and hub-only keys:
+The gate that renders the `environment:` key itself, today
+`dep("aeth-ext") or keys("tool.docker.supervise") or keys("tool.docker.wireguard")`, gains
+`or keys("tool.docker.wireguard_hub")`, so the hub's line can never render without the key above
+it. The capability and hub-only keys:
 
 ```yaml
     # !if keys("tool.docker.wireguard") or keys("tool.docker.wireguard_hub"):
@@ -703,35 +801,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends iptables \
 
 ### 9.4 `aeth-devkit` and `devkit-templates`
 
-No change is expected: the gates use `keys()` on new paths, which the language already resolves
-to `None` when absent, and the compose rules are read from the annotations. *Verify in grounding:*
-that `presence` handles `sysctls` and `ports` (list-valued keys) exactly as it handles `cap_add`.
+The templates need no devkit change: `keys()` returns the value at a path, `None` when absent and
+`false` when a switch is written off, so `wireguard = false` in the hub's `pyproject.toml` (3.6)
+gates the spoke blocks off; the `presence` rule inserts a missing key with its whole scaffold
+subtree and never changes an existing one, so the list-valued `sysctls` and `ports` behave exactly
+as `cap_add` does; `env-keys` only appends, so no rule removes a key; and `setup-project` validates
+no `[tool.docker]` key beyond `services`, the silence flag and the two legacy keys, so the three
+new keys pass through. The one devkit change this document needs is the kept release job of 3.7,
+in `aeth-devkit` and `devkit-templates`.
 
 ## 10. Consuming projects
 
-### 10.1 ScheduledReportAggregator and the test project (spokes)
+### 10.1 ScheduledReportAggregator and `tunnel-probe` (spokes)
 
 - `pyproject.toml`: unchanged, `wireguard = true`.
 - Run `setup-project` after this repo's release. Then, by hand, remove the ten old `WG_*` lines
   from `docker/compose.yaml`; the rule engine does not remove keys.
 - Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL=https://tunnels.sweetfiretobacco.com`,
-  `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The four old peer values, if present
-  from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
+  `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The six old peer values of 5.1, if
+  present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
 - Enrol: take the public key from the container's start log, add the row to the hub's
   `peers.toml` (3.8), release the hub.
-- Consent adoption is optional and independent: ScheduledReportAggregator wraps each job run in
-  `busy()` and uses the request callback to stop scheduling new jobs; the test project needs
-  nothing.
-- The test project is a spoke whose app connects to the database over the tunnel and runs a
-  trivial query, so the Python connection-and-query workflow is exercised outside production. Its
-  DB client is its own spec's business.
+- Neither adopts consent in this change: the app-side helper is deferred (6.4), and
+  non-participation reads as consent.
+- `tunnel-probe` is a spoke whose app, in this document, only heartbeats. Its database query,
+  which exercises the Python connection-and-query workflow over the tunnel outside production, is
+  the next phase's (section 11), as is its database client.
 
 ### 10.2 The office PC
 
 Not a container. Download `office-db-pc.conf` from the hub's release assets, replace the private
 key placeholder with the PC's own key, install with WireGuard for Windows. Re-download after any
-hub release that changes the `[hub]` section. Its firewall rule allows the database port only from
-the spoke addresses in `peers.toml`.
+hub release that changes the `[hub]` section. Its firewall rule for the database port is the next
+phase's (section 11).
 
 ## 11. Decisions the owner delegated, and decisions reserved for the owner
 
@@ -739,110 +841,146 @@ Delegated to this document and decided here:
 
 - Hub repository `AetherBreaker/wireguard-hub`; package `wireguard_hub`; service, container and
   healthchecks.io slug `wireguard-hub`.
+- The test project: repository `AetherBreaker/tunnel-probe`; package `tunnel_probe`; service,
+  container, healthchecks.io slug and peer-table name `tunnel-probe`; conf asset
+  `tunnel-probe.conf`.
+- The hub's kept release job is named `peers` (3.7).
 - Tunnel subnet `10.8.0.0/24`. Addresses: hub `10.8.0.1/24`; office database PC `10.8.0.10/32`;
-  ScheduledReportAggregator `10.8.0.20/32`; the test project `10.8.0.21/32`. Further peers from
+  ScheduledReportAggregator `10.8.0.20/32`; `tunnel-probe` `10.8.0.21/32`. Further peers from
   `.22` upward. The first-deploy check confirms neither the office LAN nor the VPS uses this
   network.
 - UDP port 51820. Public name `tunnels.sweetfiretobacco.com` (the owner's choice, recorded).
 
-Reserved for the owner, to be answered in the grounding pass and written in here before any plan
-is written. Under rule 0.2 an implementer who reaches one of these unanswered stops:
+Reserved for the owner and answered in the grounding pass of 2026-09-14:
 
-- The database engine, port and protocol for `rules.v4`, and whether it listens on the PC's LAN
-  address.
-- The test project's name (its `peers.toml` row and its `.conf` asset name).
-- The GitHub token's owner account, its expiry policy, and who rotates it.
-- Whether ScheduledReportAggregator adopts consent in the same change as its migration or later.
-- Whether `wireguard-hub` runs with `supervise = true` (gains `/fail` on a crash; nothing else).
+- **The database engine, port and protocol for `rules.v4`, and where it listens:** deferred to the
+  next phase, after this document is implemented. `rules.v4` ships with the policy only (3.3);
+  the per-flow rules, the office PC's firewall rule (10.2), `tunnel-probe`'s query (10.1) and the
+  three checks of section 16 that need the database follow with that decision.
+- **The test project's name:** delegated to this document, `tunnel-probe` (above).
+- **The production token:** a fine-grained token on the `AetherBreaker` account with read-only
+  access to the contents of `wireguard-hub` and nothing else, one-year expiry, rotated by the
+  owner when it expires. An expired token surfaces as `config unavailable` in the spoke's log
+  and, if the hub changes meanwhile, as the tunnel going Disconnected.
+- **The smoke-test fixture:** repository `AetherBreaker/wireguard-hub-smoke`, private, holding two
+  releases whose `peers.toml` enrol the fixed test key at two addresses (13). Its token is a
+  second fine-grained token of the same shape, scoped to that repository only. The test reads the
+  key and the token from `DEVKIT_SMOKE_WG_PRIVATE_KEY` and `DEVKIT_SMOKE_WG_HUB_TOKEN`; CI holds
+  them as secrets under the same names.
+- **Whether ScheduledReportAggregator adopts consent in the same change as its migration:** later,
+  with the `aeth_ext` helper (6.4).
+- **Whether `wireguard-hub` runs with `supervise = true`:** no; 3.6 stands. A crashed hub exits
+  its container, its pings stop and healthchecks.io alerts; `supervise` would add only an
+  immediate `/fail` and oblige the hub's heartbeat loop to know about the supervisor owning the
+  ping.
+- **The `[tool.devkit]` key for the kept release job:** `release-workflow-jobs` (3.7).
+- **The cache location:** `persisted_data/wireguard/peers.toml`, in an implicit folder of the
+  entrypoint's, not under `logs` and not in `required_persisted_dirs` (4.4).
 
-## 12. Superseded text in the predecessor documents
+Nothing in this list is open. An implementer who needs a decision this document does not hold
+stops under rule 0.2.
 
-In `2026-09-08-container-wireguard-mode-design.md` (this repo): the environment contract table of
-section 6 and the `WG_*` lines and healthcheck rationale in section 8 are superseded by sections
-4, 5, 8 and 9 here; the handshake timeout's "refused start" in section 6 step 3 is superseded by
-5.3 and 5.4; the "No status file" decision stands.
+## 12. Constraints, topology and the cleanup list
 
-The ScheduledReportAggregator design of 2026-09-08 was deleted on 2026-09-14 rather than edited.
-Its decisions that still stand, restated here so nothing depends on the deleted text:
+Constraints, all the owner's:
 
-- **Constraints, all the owner's.** In-house end to end: no third-party overlay or tunnel service
-  in the data path. Every real user of the network has its own key pair and tunnel address, so
-  activity is attributable; no shared forwarder between apps. The database must not be reachable
-  by any other container on the `coolify` network. Coolify conventions hold: auto-deploy on
-  changes under `docker/**`, consistent container names, every container on the external
-  `coolify` network so `central-log-server` resolves. healthchecks.io and Pushover for every new
-  component, preferred not required.
-- **The tunnel lives inside the app container** (no sidecar, no relay, no extra Docker network),
-  and that decision is unchanged. Rejected there and still rejected: a sidecar sharing the app's
-  network namespace, a relay sidecar on a private network with DNAT, a relay reachable on
-  `coolify`, Cloudflare Tunnel, Tailscale-class overlays, and a userspace WireGuard forwarder.
-- **Topology.** Hub and spoke; every spoke talks only to the hub; spokes on the VPS use the hub's
-  public endpoint too, through Docker's hairpin path, with the per-peer `endpoint` override of 3.2
-  as the fallback. No DNS inside the tunnel: the database host is reached by its tunnel address.
+- In-house end to end: no third-party overlay or tunnel service in the data path.
+- Every real user of the network has its own key pair and tunnel address, so activity is
+  attributable; no shared forwarder between apps.
+- The database must not be reachable by any other container on the `coolify` network.
+- Coolify conventions hold: auto-deploy on changes under `docker/**`, consistent container names,
+  every container on the external `coolify` network so `central-log-server` resolves.
+- healthchecks.io and Pushover for every new component, preferred not required.
+
+Topology and security:
+
+- **The tunnel lives inside the app container**: no sidecar, no relay, no extra Docker network.
+  Rejected: a sidecar sharing the app's network namespace, a relay sidecar on a private network
+  with DNAT, a relay reachable on `coolify`, Cloudflare Tunnel, Tailscale-class overlays, and a
+  userspace WireGuard forwarder.
+- **Hub and spoke.** Every spoke talks only to the hub; spokes on the VPS use the hub's public
+  endpoint too, through Docker's hairpin path, with the per-peer `endpoint` override of 3.2 as the
+  fallback. No DNS inside the tunnel: the database host is reached by its tunnel address.
+- **Spokes get `cap_add: [NET_ADMIN]` and nothing else**, no `devices` and no `sysctls` (9.2); the
+  hub alone adds the forwarding sysctl and the published port.
 - **Security layers.** The hub's cryptokey routing and its `FORWARD` rules (3.3); the office PC's
-  firewall allowing the database port only from approved tunnel addresses; a read-only database
-  account for the app; private keys only in Coolify secrets or the gitignored local `.env`.
+  firewall allowing the database port only from approved tunnel addresses (next phase, 10.2); a
+  read-only database account for the app; private keys only in Coolify secrets or the gitignored
+  local `.env`.
 - **The office PC** runs native WireGuard for Windows as a service, not Docker Desktop under WSL2,
   so the tunnel is up before anyone logs in and the database port is directly reachable at the
   PC's tunnel address. It needs only outbound UDP to the hub; no router port forward.
-- **The previous attempt's artefacts** are a cleanup list, not inputs: the workspace folders
-  `wireguard-test-sender`, `wireguard-vps-relay` and `wireguard-warehouse-client`, the
-  workspace-root `compose.test.yaml`, ScheduledReportAggregator's gitignored
-  `docker/wireguard/keys.env`, and the `SERVER_PUBLIC_KEY`, `SERVER_ENDPOINT` and
-  `TAXES_JOB_PRIVATE_KEY` entries in its `.env`. Key pairs from that attempt are retired, never
-  reused. ScheduledReportAggregator's tracked `docker/entrypoint.sh` and `docker/scripts/` are
-  leftovers of the shell entrypoint and are deleted with its migration (10.1).
 
-What that document promised and this one changes: `devices` and `sysctls` on spokes (only
-`cap_add`, per the predecessor in this repo); the `/run/devkit/wireguard.json` status file and an
-`aeth_ext` reader of it (the tunnel heartbeat file and the ping, 5.7); the hub as a
-`linuxserver/wireguard` container (section 3); the five peer environment variables and their
-Coolify values (sections 8 and 10.1); and its address plan, which section 11 confirms.
+The cleanup list, artefacts of an earlier attempt that are removed and never read as inputs: the
+workspace folders `wireguard-test-sender`, `wireguard-vps-relay` and `wireguard-warehouse-client`;
+the workspace-root `compose.test.yaml`; ScheduledReportAggregator's gitignored
+`docker/wireguard/keys.env`; and the `SERVER_PUBLIC_KEY`, `SERVER_ENDPOINT` and
+`TAXES_JOB_PRIVATE_KEY` entries in its `.env`. Key pairs from that attempt are retired, never
+reused.
 
 ## 13. Tests
 
 **This repo, unit.** Tag validation (accepts `v1.2.3`, rejects `1.2.3`, `v1.2`, `v1.2.3-rc1`,
 `../x`). Bundle parsing, every validation rule of 3.2 with one failing fixture each, entry
-selection, effective configuration with and without overrides, equality as sets. The
-configuration diff to commands of 5.5, one case per row. The state machine with an injected
-clock: Broken classification per row of 5.3, the boot alert at 60 s, the runtime `/fail` on
-transition, the 30-minute give-up, the clock reset on Connected, hold postponing, the hold limit.
-The consent client against a fake socket: `ok`, `hold`, garbage, EOF, timeout, absent socket,
-refused connection. Startup script resolution, order, environment, failure. `scrub_env` and the
-built-in scrubs. Mode detection and the refusals of 5.1.
+selection, effective configuration with and without overrides, equality as sets. The fetch of 4.2
+against an in-process HTTP listener on localhost, plain HTTP, Linux-only like the client, the
+two GitHub hosts being the fetch code's ordinary inputs: the listing, the 302, the redirect
+target, and the assertion that the `Authorization` header reaches only the API address and never
+the redirect target; a missing asset; a body over 1 MiB; a `hub_version` that does not match the
+tag. The configuration diff to commands of 5.5, one case per row, the endpoint last. The state
+machine with an injected clock: Broken classification per row of 5.3, the boot alert at 60 s, the
+runtime `/fail` on transition, the 30-minute give-up, the clock reset on Connected, the
+alternating repair of 5.6 and its two restart points, hold postponing, the hold limit. The consent
+client against a fake socket: `ok`, `hold`, garbage, EOF, timeout, absent socket, refused
+connection. Startup script resolution, order, environment, failure. `scrub_env` and the built-in
+scrubs on both paths. The implicit folders of 4.4 and 5.7 created and chowned, and not part of
+the mount check. Mode detection and the refusals of 5.1.
 
-**This repo, render.** The existing dry-run render check gains the hub mode: `wireguard_hub = true`
-renders the hub blocks and the single-file healthcheck, and both switches together are reported.
+**This repo, render.** The existing dry-run render check gains the hub mode as a third render:
+`wireguard_hub = true` renders the hub blocks and the single-file healthcheck, and both switches
+together are reported.
 
 **This repo, smoke (Linux).** A hub container built from the test image running a minimal hub (the
-commands of 3.4 in shell are acceptable here), a stand-in HTTP server on the test network serving
-`/version` and playing GitHub through the test-only override of section 8, and a spoke built from
-the template in fetched mode. Asserts: boot fetch, Connected, both heartbeats fresh, the token
-never appears in the stand-in's redirect-target request; the cache file exists; the hub removes
-the peer, the spoke goes Disconnected, the healthcheck names the tunnel file; with the limit set to
-seconds, the spoke asks, a participating test app answers `hold`, the spoke is not signalled, the
-app answers `ok`, the spoke sends SIGINT and exits 75; the stand-in changes the version and the
-bundle's address for the spoke, the spoke re-applies in place and the new address is on `wg0`
-without the interface having gone down. The existing off-mode, supervise-mode and
-environment-mode smoke tests stay green.
+commands of 3.4 in shell are acceptable here) and serving `/version` from a small HTTP listener on
+the test network, reached through `WG_HUB_URL` over plain `http`. The bundle comes from real
+GitHub, from the fixture repository of section 11: two releases whose `peers.toml` enrol a fixed
+test key at two addresses, fetched with the fixture token. The test reads
+`DEVKIT_SMOKE_WG_PRIVATE_KEY` and `DEVKIT_SMOKE_WG_HUB_TOKEN` from its environment and refuses to
+run, naming them, when either is missing (it does not skip); CI provides them as secrets. A spoke
+built from the template in fetched mode with that key, and a second spoke with a freshly generated
+key. Asserts: boot fetch, Connected, both heartbeats fresh; the cache file exists at its path with
+its mode and owner; the second spoke is Disconnected with `not enrolled` and its app is running;
+the hub removes the peer, the spoke goes Disconnected, the healthcheck names the tunnel file; with
+the limit set to seconds, the spoke asks, a participating test app (which speaks the protocol of
+6.2 itself, in a few lines of standard-library Python) answers `hold`, the spoke is not signalled,
+the app answers `ok`, the spoke sends SIGINT and exits 75; the hub's `/version` moves to the second
+tag and the test hub's allowed IPs to the second address, the spoke re-applies in place and the new
+address is on `wg0` without the interface having gone down. The existing off-mode, supervise-mode
+and environment-mode smoke tests stay green. The helper that applies the Dockerfile template's
+gates locally today matches one exact gate line; it learns the two gates of 9.3.
 
-**`aeth_ext`.** The helper's reply logic through an in-memory transport on both platforms; the
-real-socket round trip in one Linux-only test; the no-op path with the variable absent and, on
-Windows, with it present.
+**`aeth-devkit`.** The kept-jobs key of 3.7: a `release.yml` holding a named job survives a
+re-render with the job spliced under `jobs` and reported; a named job the file lacks is reported,
+not an error; an unknown `[tool.devkit]` key is still refused; the fixture template's header line
+carries the new wording.
 
 **`wireguard-hub`.** `peers.toml` validation, one test per rule; the `rules.v4` cross-check; the
 startup script with a mocked `subprocess` asserting the exact command lines and that the key goes
-to stdin; the `/version` response; the heartbeat gating on the interface path.
+to stdin; the `/version` response; the heartbeat gating on the interface path and on
+`DEVKIT_SUPERVISED_PING`.
 
 ## 14. Release order
 
-1. `aeth_ext`: the consent helper. Independent; nothing breaks without it.
+1. `aeth-devkit` and `devkit-templates`: the kept release job (3.7). Independent; nothing breaks
+   without it, and the hub needs it before its first release.
 2. `devkit-container`: everything in sections 5 to 9. Backward compatible: a spoke rendered before
-   this release keeps its old compose lines and runs in environment mode.
+   this release keeps its old compose lines and runs in environment mode. Its fetched-mode smoke
+   test needs the fixture repository and the two secrets of section 11 in place first.
 3. `wireguard-hub`: created with `gh repo create AetherBreaker/wireguard-hub --private`, a stub
-   `pyproject.toml`, then `setup-project` against the release from step 2; first release with the
-   owner's peer rows; deployed in Coolify with the domain attached.
-4. Spokes re-rendered and migrated per 10.1; the office PC per 10.2.
+   `pyproject.toml`, then `setup-project` against the releases from steps 1 and 2, the `peers` job
+   written; first release with the owner's peer rows; deployed in Coolify with the domain attached.
+4. Spokes re-rendered and migrated per 10.1, `tunnel-probe` created the same way as the hub; the
+   office PC per 10.2.
 5. The first-deploy checklist of section 16, in order.
 
 ## 15. TODO entries to record in this repo at implementation
@@ -852,16 +990,19 @@ to stdin; the `/version` response; the heartbeat gating on the interface path.
 - Preshared keys in fetched mode (needs a per-peer secret on the hub side).
 - Generating `rules.v4` from a per-peer `allow` list in `peers.toml`, removing the duplicated
   addresses.
-- A thread-based consent helper in `aeth_ext` for non-async apps.
 - A data-plane probe (ping the hub's tunnel address each poll) as a second health signal.
+
+The `aeth_ext` consent helper of 6.4, async first and a thread-based variant for non-async apps,
+is recorded in `aeth_ext`'s own `TODO.md`, not here.
 
 ## 16. Host requirements and the first-deploy checklist
 
-Host requirements, in addition to the predecessor's kernel WireGuard module: the host kernel
-provides the netfilter modules `iptables` needs (`nf_tables` and the `xt_conntrack` match on
-bookworm's `iptables-nft`); Coolify passes `sysctls` and `ports` through for the hub; the Docker
-hairpin path works for both UDP 51820 and HTTPS 443 to the public name from a container on the
-same host. The per-peer `endpoint` override in 3.2 is the fallback for the hairpin.
+Host requirements, in addition to the kernel WireGuard module the wireguard mode already needs:
+the host kernel provides the netfilter modules `iptables` needs (`nf_tables` and the
+`xt_conntrack` match on bookworm's `iptables-nft`); Coolify passes `sysctls` and `ports` through
+for the hub; the Docker hairpin path works for both UDP 51820 and HTTPS 443 to the public name
+from a container on the same host. The per-peer `endpoint` override in 3.2 is the fallback for
+the hairpin.
 
 First deploy, in this order, each a hard stop if it fails:
 
@@ -874,9 +1015,11 @@ First deploy, in this order, each a hard stop if it fails:
 5. ScheduledReportAggregator's container fetches the bundle, handshakes with the hub at the public
    endpoint (the hairpin check), and both of its heartbeat files are fresh; `docker inspect` shows
    `cap_add` passed through.
-6. The test project runs its query against the database over the tunnel.
-7. A sibling container on the `coolify` network cannot reach the database port (negative test).
-8. The office PC's firewall rejects the database port from a tunnel address that is not approved.
-9. A hub release that changes nothing for the spoke is picked up within the version poll interval
+6. A hub release that changes nothing for the spoke is picked up within the version poll interval
    with no re-apply logged; one that changes its keepalive is applied in place without the
    interface going down.
+
+The next phase's checks, once the database decision of section 11 is made: `tunnel-probe` runs
+its query against the database over the tunnel; a sibling container on the `coolify` network
+cannot reach the database port (negative test); the office PC's firewall rejects the database
+port from a tunnel address that is not approved.
