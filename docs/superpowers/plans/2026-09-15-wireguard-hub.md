@@ -1525,7 +1525,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push
 ```
 
-- [ ] **Step 5: Deploy in Coolify and run section 16 steps 1 to 4 (the owner)**
+- [x] **Step 5: Deploy in Coolify and run section 16 steps 1 to 4 (the owner)**
 
 The owner: creates the Coolify service from `docker/compose.yaml`, sets `WG_HUB_PRIVATE_KEY`, `PINGKEY`, `ALERTS_EMAIL_PWD`, attaches `tunnels.sweetfiretobacco.com` to the service on port 8000, deploys, then in order:
 
@@ -1536,11 +1536,13 @@ The owner: creates the Coolify service from `docker/compose.yaml`, sets `WG_HUB_
 
 The executor records the owner's results as a note under this step; a failing check is a stop.
 
+Owner's results (2026-09-15): the first deploy failed twice before succeeding, first on the private-repo clone (the repository is public for now, spec section 2) and then because `docker-pin`'s refresh had dropped the window line (aeth-devkit 15.1.1 fixes it; the line was restored by hand). Then: deployed, `/version` answers over the public name, the container is healthy in Coolify and the `wireguard-hub` check is up on healthchecks.io (step 3). Steps 1 and 2 hold by evidence: `wg0` came up and `iptables-restore` applied, so the kernel module and the netfilter modules are present; the subnet check is the owner's word. Step 4 waits for the first enrolled peer.
+
 ---
 
 ### Task 9: sync the plan copies and report
 
-- [ ] **Step 1: Mirror the fully ticked plan to the other three repositories**
+- [x] **Step 1: Mirror the fully ticked plan to the other three repositories**
 
 ```bash
 ws="/d/SFT Software Projects/SFT Workspace"
