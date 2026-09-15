@@ -351,7 +351,9 @@ fn fetched_mode_boots_from_the_hub_release_re_applies_in_place_asks_before_givin
   let cached = text(&exec_ok(&spoke, &["cat", "/app/persisted_data/wireguard/peers.toml"]));
   assert!(cached.contains("hub_version = \"v0.1.0\""));
   let logfile = text(&exec_ok(&spoke, &["cat", "/app/persisted_data/logs/devkit-container.log"]));
-  assert!(logfile.contains("applied v0.1.0"), "{logfile}");
+  // The boot lines precede prepare, which makes the folder on a fresh volume; the file holds the
+  // supervisor's lines from then on (spec 5.8).
+  assert!(logfile.contains("wireguard Connected"), "{logfile}");
   let report: serde_json::Value = serde_json::from_slice(&exec(&spoke, &["cat", "/app/persisted_data/report.json"]).stdout).unwrap();
   assert_eq!(report["wg_hub_token_present"], false);
   assert_eq!(report["wg_private_key_present"], false);
