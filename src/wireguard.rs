@@ -223,6 +223,128 @@ impl Config {
   }
 }
 
+pub const IFACE: &str = "wg0";
+
+/// One shell-out of an apply. `Endpoint` failures are Disconnected, `endpoint unresolvable`
+/// (the one command that resolves a name); everything else failing is Broken (spec 5.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cmd {
+  pub program: &'static str,
+  pub args: Vec<String>,
+  pub kind: CmdKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmdKind {
+  Local,
+  Endpoint,
+}
+
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
+fn cmd(program: &'static str, args: &[&str], kind: CmdKind) -> Cmd {
+  Cmd {
+    program,
+    args: args.iter().map(|a| a.to_string()).collect(),
+    kind,
+  }
+}
+
+/// The apply of 5.2 step 3: peer, address, link up, routes, and the endpoint last.
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
+pub fn apply_commands(eff: &Effective) -> Vec<Cmd> {
+  let mut v = vec![
+    cmd(
+      "wg",
+      &[
+        "set",
+        IFACE,
+        "peer",
+        &eff.hub_public_key,
+        "allowed-ips",
+        &eff.allowed_ips.join(","),
+        "persistent-keepalive",
+        &eff.keepalive.to_string(),
+      ],
+      CmdKind::Local,
+    ),
+    cmd("ip", &["address", "add", &eff.address, "dev", IFACE], CmdKind::Local),
+    cmd("ip", &["link", "set", "up", "dev", IFACE], CmdKind::Local),
+  ];
+  for cidr in &eff.allowed_ips {
+    // `replace`, not `add`: the kernel may already have added the interface's own subnet.
+    v.push(cmd("ip", &["route", "replace", cidr, "dev", IFACE], CmdKind::Local));
+  }
+  v.push(endpoint_command(eff));
+  v
+}
+
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
+pub fn endpoint_command(eff: &Effective) -> Cmd {
+  cmd(
+    "wg",
+    &["set", IFACE, "peer", &eff.hub_public_key, "endpoint", &eff.endpoint],
+    CmdKind::Endpoint,
+  )
+}
+
+/// The in-place re-apply of 5.5: one row per changed field, in the table's order, the endpoint
+/// last. `endpoint_ok` false re-sets the endpoint even when it did not change, so a name that
+/// failed to resolve is retried by the same apply.
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
+pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> Vec<Cmd> {
+  use std::collections::BTreeSet;
+  let mut v = Vec::new();
+  let key_changed = old.hub_public_key != new.hub_public_key;
+  let old_ips: BTreeSet<&str> = old.allowed_ips.iter().map(String::as_str).collect();
+  let new_ips: BTreeSet<&str> = new.allowed_ips.iter().map(String::as_str).collect();
+  if key_changed {
+    v.push(cmd("wg", &["set", IFACE, "peer", &old.hub_public_key, "remove"], CmdKind::Local));
+    v.push(cmd(
+      "wg",
+      &[
+        "set",
+        IFACE,
+        "peer",
+        &new.hub_public_key,
+        "allowed-ips",
+        &new.allowed_ips.join(","),
+        "persistent-keepalive",
+        &new.keepalive.to_string(),
+      ],
+      CmdKind::Local,
+    ));
+  } else if old_ips != new_ips || old.keepalive != new.keepalive {
+    let mut args: Vec<String> = vec!["set".into(), IFACE.into(), "peer".into(), new.hub_public_key.clone()];
+    if old_ips != new_ips {
+      args.push("allowed-ips".into());
+      args.push(new.allowed_ips.join(","));
+    }
+    if old.keepalive != new.keepalive {
+      args.push("persistent-keepalive".into());
+      args.push(new.keepalive.to_string());
+    }
+    v.push(Cmd {
+      program: "wg",
+      args,
+      kind: CmdKind::Local,
+    });
+  }
+  if old.address != new.address {
+    v.push(cmd("ip", &["address", "replace", &new.address, "dev", IFACE], CmdKind::Local));
+    v.push(cmd("ip", &["address", "delete", &old.address, "dev", IFACE], CmdKind::Local));
+  }
+  for cidr in new_ips.difference(&old_ips) {
+    v.push(cmd("ip", &["route", "replace", cidr, "dev", IFACE], CmdKind::Local));
+  }
+  for cidr in old_ips.difference(&new_ips) {
+    v.push(cmd("ip", &["route", "delete", cidr, "dev", IFACE], CmdKind::Local));
+  }
+  if key_changed || old.endpoint != new.endpoint || !endpoint_ok {
+    v.push(endpoint_command(new));
+  }
+  v
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
   Nothing,
@@ -279,7 +401,8 @@ pub fn parse_latest_handshake(wg_show: &str, peer_public_key: &str) -> Option<u6
 }
 
 #[cfg(unix)]
-pub use unix::Tunnel;
+#[allow(unused_imports)] // until run and the supervisor use them (task 11)
+pub use unix::{ApplyError, Interface, Tunnel};
 
 #[cfg(unix)]
 mod unix {
@@ -290,7 +413,8 @@ mod unix {
 
   use super::{Action, Config, parse_latest_handshake};
 
-  pub const IFACE: &str = "wg0";
+  use super::{Cmd, CmdKind, IFACE};
+  use crate::bundle::Effective;
 
   /// The interface, up. Dropping it does not tear it down: the supervisor decides when.
   pub struct Tunnel {
@@ -419,6 +543,128 @@ mod unix {
           self.down();
           self.up()
         }
+      }
+    }
+
+    /// Best effort: an interface that is already gone is not an error.
+    pub fn down(&self) {
+      let _ = Command::new("ip").args(["link", "del", "dev", IFACE]).output();
+    }
+  }
+  /// A failed apply command, classified per spec 5.3.
+  #[derive(Debug)]
+  #[allow(dead_code)] // until run and the supervisor use it (task 11)
+  pub enum ApplyError {
+    /// A local command failed: Broken.
+    Local(anyhow::Error),
+    /// The endpoint command failed, the one that resolves a name: `endpoint unresolvable`.
+    Endpoint(anyhow::Error),
+  }
+
+  /// `wg0`, created and holding the private key. Dropping it does not tear it down: the
+  /// supervisor decides when.
+  #[allow(dead_code)] // until run and the supervisor use it (task 11)
+  pub struct Interface {
+    pub public_key: String,
+    private_key: String,
+    preshared_key: Option<String>,
+  }
+
+  #[allow(dead_code)] // until run and the supervisor use it (task 11)
+  impl Interface {
+    /// Preflight, `ip link add`, the private key over stdin, the public key derived (spec 5.2
+    /// step 1). A failure leaves no interface behind.
+    pub fn create(private_key: &str, preshared_key: Option<String>) -> Result<Interface> {
+      for tool in ["wg", "ip"] {
+        if Command::new(tool).arg("--version").output().is_err() && Command::new(tool).arg("-V").output().is_err() {
+          bail!(
+            "{tool} is not in the image: it was built without the wireguard block; rerun setup-project with a devkit that knows the `wireguard` switch and rebuild"
+          );
+        }
+      }
+      let public_key = run("wg", &["pubkey"], Some(private_key))?.trim().to_string();
+      let iface = Interface {
+        public_key,
+        private_key: private_key.to_string(),
+        preshared_key,
+      };
+      if let Err(e) = iface.link_up_with_key() {
+        iface.down();
+        return Err(e);
+      }
+      Ok(iface)
+    }
+
+    fn link_up_with_key(&self) -> Result<()> {
+      run("ip", &["link", "add", "dev", IFACE, "type", "wireguard"], None)?;
+      run("wg", &["set", IFACE, "private-key", "/dev/stdin"], Some(&self.private_key))?;
+      Ok(())
+    }
+
+    fn exec(&self, c: &Cmd) -> Result<(), ApplyError> {
+      let args: Vec<&str> = c.args.iter().map(String::as_str).collect();
+      match run(c.program, &args, None) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(match c.kind {
+          CmdKind::Local => ApplyError::Local(e),
+          CmdKind::Endpoint => ApplyError::Endpoint(e),
+        }),
+      }
+    }
+
+    /// The apply of 5.2 step 3; the preshared key, when there is one, goes over stdin right
+    /// after the peer command.
+    pub fn apply(&self, eff: &Effective) -> Result<(), ApplyError> {
+      for (i, c) in super::apply_commands(eff).iter().enumerate() {
+        self.exec(c)?;
+        if i == 0
+          && let Some(psk) = &self.preshared_key
+        {
+          run(
+            "wg",
+            &["set", IFACE, "peer", &eff.hub_public_key, "preshared-key", "/dev/stdin"],
+            Some(psk),
+          )
+          .map_err(ApplyError::Local)?;
+        }
+      }
+      Ok(())
+    }
+
+    pub fn set_endpoint(&self, eff: &Effective) -> Result<(), ApplyError> {
+      self.exec(&super::endpoint_command(eff))
+    }
+
+    pub fn reapply(&self, old: &Effective, new: &Effective, endpoint_ok: bool) -> Result<(), ApplyError> {
+      for c in super::reapply_commands(old, new, endpoint_ok) {
+        self.exec(&c)?;
+      }
+      Ok(())
+    }
+
+    /// Down and up again with `eff` (5.6): the interface deleted, created, keyed, applied.
+    pub fn down_up(&self, eff: &Effective) -> Result<(), ApplyError> {
+      self.down();
+      self.link_up_with_key().map_err(ApplyError::Local)?;
+      self.apply(eff)
+    }
+
+    pub fn latest_handshake(&self, peer_key: &str) -> Result<Option<u64>> {
+      let out = run("wg", &["show", IFACE, "latest-handshakes"], None)?;
+      Ok(parse_latest_handshake(&out, peer_key))
+    }
+
+    /// Poll every 500 ms for up to `timeout`; `Ok(false)` is no handshake in time (5.2 step 4).
+    pub fn wait_handshake(&self, peer_key: &str, timeout: std::time::Duration) -> Result<bool> {
+      let deadline = std::time::Instant::now() + timeout;
+      loop {
+        if self.latest_handshake(peer_key)?.is_some() {
+          return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+          return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
       }
     }
 
@@ -646,5 +892,109 @@ mod tests {
     for bad in ["wireguard-hub", "a/b/c", "/b", "a/", "a b/c", "https://github.com/a/b"] {
       assert!(validate_repo(bad).is_err(), "{bad:?} must be refused");
     }
+  }
+  fn eff() -> Effective {
+    Effective {
+      address: "10.8.0.20/32".into(),
+      hub_public_key: "HUBKEY".into(),
+      endpoint: "tunnels.example.com:51820".into(),
+      allowed_ips: vec!["10.8.0.0/24".into()],
+      keepalive: 25,
+    }
+  }
+
+  fn lines(cmds: &[Cmd]) -> Vec<String> {
+    cmds.iter().map(|c| format!("{} {}", c.program, c.args.join(" "))).collect()
+  }
+
+  #[test]
+  fn the_apply_runs_the_endpoint_last() {
+    let cmds = apply_commands(&eff());
+    assert_eq!(
+      lines(&cmds),
+      [
+        "wg set wg0 peer HUBKEY allowed-ips 10.8.0.0/24 persistent-keepalive 25",
+        "ip address add 10.8.0.20/32 dev wg0",
+        "ip link set up dev wg0",
+        "ip route replace 10.8.0.0/24 dev wg0",
+        "wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820",
+      ]
+    );
+    assert!(cmds[..4].iter().all(|c| c.kind == CmdKind::Local));
+    assert_eq!(cmds[4].kind, CmdKind::Endpoint);
+  }
+
+  #[test]
+  fn the_reapply_emits_one_row_per_changed_field_in_order_endpoint_last() {
+    let old = eff();
+    assert!(reapply_commands(&old, &old, true).is_empty(), "nothing changed");
+    let mut key = old.clone();
+    key.hub_public_key = "NEWKEY".into();
+    assert_eq!(
+      lines(&reapply_commands(&old, &key, true)),
+      [
+        "wg set wg0 peer HUBKEY remove",
+        "wg set wg0 peer NEWKEY allowed-ips 10.8.0.0/24 persistent-keepalive 25",
+        "wg set wg0 peer NEWKEY endpoint tunnels.example.com:51820",
+      ]
+    );
+    let mut ips = old.clone();
+    ips.allowed_ips = vec!["10.8.0.0/24".into(), "10.9.0.0/24".into()];
+    assert_eq!(
+      lines(&reapply_commands(&old, &ips, true)),
+      [
+        "wg set wg0 peer HUBKEY allowed-ips 10.8.0.0/24,10.9.0.0/24",
+        "ip route replace 10.9.0.0/24 dev wg0",
+      ]
+    );
+    let mut fewer = ips.clone();
+    fewer.allowed_ips = vec!["10.9.0.0/24".into()];
+    assert_eq!(
+      lines(&reapply_commands(&ips, &fewer, true)),
+      [
+        "wg set wg0 peer HUBKEY allowed-ips 10.9.0.0/24",
+        "ip route delete 10.8.0.0/24 dev wg0"
+      ],
+      "a kept CIDR is not re-added"
+    );
+    let mut keepalive = old.clone();
+    keepalive.keepalive = 15;
+    assert_eq!(
+      lines(&reapply_commands(&old, &keepalive, true)),
+      ["wg set wg0 peer HUBKEY persistent-keepalive 15"]
+    );
+    let mut address = old.clone();
+    address.address = "10.8.0.21/32".into();
+    assert_eq!(
+      lines(&reapply_commands(&old, &address, true)),
+      ["ip address replace 10.8.0.21/32 dev wg0", "ip address delete 10.8.0.20/32 dev wg0"]
+    );
+    let mut endpoint = old.clone();
+    endpoint.endpoint = "other.example.com:51820".into();
+    let cmds = reapply_commands(&old, &endpoint, true);
+    assert_eq!(lines(&cmds), ["wg set wg0 peer HUBKEY endpoint other.example.com:51820"]);
+    assert_eq!(cmds[0].kind, CmdKind::Endpoint);
+    assert_eq!(
+      lines(&reapply_commands(&old, &old, false)),
+      ["wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820"],
+      "an unresolved endpoint is retried even when unchanged"
+    );
+    let mut everything = key.clone();
+    everything.address = "10.8.0.21/32".into();
+    everything.allowed_ips = vec!["10.9.0.0/24".into()];
+    everything.keepalive = 15;
+    everything.endpoint = "other.example.com:51820".into();
+    assert_eq!(
+      lines(&reapply_commands(&old, &everything, true)),
+      [
+        "wg set wg0 peer HUBKEY remove",
+        "wg set wg0 peer NEWKEY allowed-ips 10.9.0.0/24 persistent-keepalive 15",
+        "ip address replace 10.8.0.21/32 dev wg0",
+        "ip address delete 10.8.0.20/32 dev wg0",
+        "ip route replace 10.9.0.0/24 dev wg0",
+        "ip route delete 10.8.0.0/24 dev wg0",
+        "wg set wg0 peer NEWKEY endpoint other.example.com:51820",
+      ]
+    );
   }
 }
