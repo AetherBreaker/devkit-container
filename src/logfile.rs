@@ -2,7 +2,6 @@
 //! as before and is appended, with a timestamp, to `persisted_data/logs/devkit-container.log`.
 //! Dumb on purpose: open, append one line, close; nothing buffered, rotated or capped; a failed
 //! write changes nothing. Hooking the binary into aeth_ext's logging is later work (todo.md).
-#![allow(dead_code)] // until run and the supervisor use it (task 11)
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -21,6 +20,7 @@ impl Log {
     }
   }
 
+  #[cfg(test)]
   pub fn path(&self) -> &Path {
     &self.path
   }

@@ -1,7 +1,6 @@
 //! The supervisor's consent client (spec 6.2): one request per connection to the app's Unix
 //! socket, one reply line back. Everything that is not a literal `hold` within the timeout is
 //! consent: a missing socket, a refused connection, an error, an empty stream, any other line.
-#![allow(dead_code)] // until the supervisor uses it (task 11)
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::net::UnixStream;

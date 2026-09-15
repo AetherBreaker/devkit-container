@@ -132,7 +132,7 @@ pub fn services(doc: &DocumentMut) -> Vec<String> {
 
 /// `[tool.docker].startup_scripts`: console script names run as root before the app (spec 7).
 /// Each must be a `[project.scripts]` key, so a typo fails before the tunnel or the mount check.
-#[allow(dead_code)] // until run uses it (task 11)
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn startup_scripts(doc: &DocumentMut) -> Result<Vec<String>> {
   let names = string_list(doc, "startup_scripts")?;
   let scripts = doc.get("project").and_then(|p| p.get("scripts")).and_then(|s| s.as_table_like());
@@ -145,12 +145,12 @@ pub fn startup_scripts(doc: &DocumentMut) -> Result<Vec<String>> {
 }
 
 /// `[tool.docker].scrub_env`: variable names removed from the app's environment (spec 7).
-#[allow(dead_code)] // until run uses it (task 11)
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn scrub_env(doc: &DocumentMut) -> Result<Vec<String>> {
   string_list(doc, "scrub_env")
 }
 
-#[allow(dead_code)] // until run uses it (task 11)
+#[cfg_attr(not(unix), allow(dead_code))]
 fn string_list(doc: &DocumentMut, key: &str) -> Result<Vec<String>> {
   let Some(item) = doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) else {
     return Ok(Vec::new());

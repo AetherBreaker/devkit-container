@@ -3,16 +3,20 @@
 
 // Off Unix only the query subcommands exist, so the entrypoint's helpers would be flagged
 // as dead code there; the attribute keeps the Windows build warning-free.
+#[cfg_attr(not(unix), allow(dead_code))] // the fetch, the cache and the supervisor (Linux) are its callers
 mod bundle;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod cache;
 #[cfg(unix)]
 mod consent;
 #[cfg(unix)]
 mod fetch;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod health;
 mod healthcheck;
 #[cfg_attr(not(unix), allow(dead_code))] // `write` and the tunnel file serve the supervisor (Unix)
 mod heartbeat;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod logfile;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod mounts;
