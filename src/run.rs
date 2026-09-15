@@ -1,7 +1,8 @@
 //! The container entrypoint (Linux only): the shell script's job, in order, then one branch:
 //! exec the app (the default) or spawn and supervise it (`supervise` / `wireguard`, spec 4).
 
-use std::path::PathBuf;
+use std::os::unix::process::ExitStatusExt as _;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use nix::unistd::{Gid, Uid, getuid, setgid, setgroups, setuid};
@@ -96,4 +97,70 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   use std::os::unix::process::CommandExt as _;
   let err = std::process::Command::new(&exe).exec();
   Err(anyhow!(err)).with_context(|| format!("exec {}", exe.display()))
+}
+
+/// Run each startup script as root, in list order, one at a time, with the full environment,
+/// working directory `app_root`, inherited stdio, no arguments, no timeout (spec 7). The first
+/// nonzero exit is the error, naming the script and its code or signal.
+#[allow(dead_code)] // until run uses it (task 11)
+pub fn run_startup_scripts(app_root: &Path, names: &[String]) -> Result<()> {
+  for name in names {
+    let exe = app_root.join(".venv").join("bin").join(name);
+    let status = std::process::Command::new(&exe)
+      .current_dir(app_root)
+      .status()
+      .with_context(|| format!("startup script {name}: running {}", exe.display()))?;
+    if !status.success() {
+      match status.code() {
+        Some(code) => bail!("startup script {name} exited {code}"),
+        None => bail!("startup script {name} was killed by signal {}", status.signal().unwrap_or(0)),
+      }
+    }
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use std::os::unix::fs::PermissionsExt as _;
+
+  use super::*;
+
+  fn script(root: &std::path::Path, name: &str, body: &str) {
+    let dir = root.join(".venv").join("bin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+  }
+
+  #[test]
+  fn startup_scripts_run_in_order_in_the_app_root_with_the_environment_and_stop_at_the_first_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    script(
+      &root,
+      "first",
+      "pwd >> log.txt; echo \"$CARGO_MANIFEST_DIR\" >> log.txt; echo first $# >> log.txt",
+    );
+    script(&root, "second", "echo second >> log.txt");
+    run_startup_scripts(&root, &["first".into(), "second".into()]).unwrap();
+    let log = std::fs::read_to_string(root.join("log.txt")).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines[0], root.to_string_lossy(), "working directory is the app root");
+    assert_eq!(lines[1], env!("CARGO_MANIFEST_DIR"), "the full environment is inherited");
+    assert_eq!(&lines[2..], ["first 0", "second"], "in order, no arguments");
+    script(&root, "third", "exit 3");
+    script(&root, "fourth", "echo fourth >> log.txt");
+    let err = run_startup_scripts(&root, &["third".into(), "fourth".into()])
+      .unwrap_err()
+      .to_string();
+    assert_eq!(err, "startup script third exited 3");
+    assert!(
+      !std::fs::read_to_string(root.join("log.txt")).unwrap().contains("fourth"),
+      "stopped at the failure"
+    );
+    let err = run_startup_scripts(&root, &["missing".into()]).unwrap_err().to_string();
+    assert!(err.contains("startup script missing"), "{err}");
+  }
 }

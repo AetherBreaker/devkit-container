@@ -130,6 +130,44 @@ pub fn services(doc: &DocumentMut) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// `[tool.docker].startup_scripts`: console script names run as root before the app (spec 7).
+/// Each must be a `[project.scripts]` key, so a typo fails before the tunnel or the mount check.
+#[allow(dead_code)] // until run uses it (task 11)
+pub fn startup_scripts(doc: &DocumentMut) -> Result<Vec<String>> {
+  let names = string_list(doc, "startup_scripts")?;
+  let scripts = doc.get("project").and_then(|p| p.get("scripts")).and_then(|s| s.as_table_like());
+  for name in &names {
+    if !scripts.is_some_and(|s| s.get(name).is_some()) {
+      bail!("[tool.docker].startup_scripts names {name:?}, which is not in [project.scripts]");
+    }
+  }
+  Ok(names)
+}
+
+/// `[tool.docker].scrub_env`: variable names removed from the app's environment (spec 7).
+#[allow(dead_code)] // until run uses it (task 11)
+pub fn scrub_env(doc: &DocumentMut) -> Result<Vec<String>> {
+  string_list(doc, "scrub_env")
+}
+
+#[allow(dead_code)] // until run uses it (task 11)
+fn string_list(doc: &DocumentMut, key: &str) -> Result<Vec<String>> {
+  let Some(item) = doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) else {
+    return Ok(Vec::new());
+  };
+  let arr = item
+    .as_array()
+    .with_context(|| format!("[tool.docker].{key} must be a list of strings"))?;
+  arr
+    .iter()
+    .map(|v| {
+      v.as_str()
+        .map(str::to_string)
+        .with_context(|| format!("[tool.docker].{key} must be a list of strings, got {v}"))
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -212,5 +250,28 @@ wireguard = true
       let err = supervise(&d).and(wireguard(&d)).unwrap_err().to_string();
       assert!(err.contains("must be true or false"), "{bad}: {err}");
     }
+  }
+  #[test]
+  fn startup_scripts_must_be_project_scripts_and_scrub_env_is_a_name_list() {
+    let d = doc(
+      "[project.scripts]
+run-app-x = \"m:main\"
+hub-up = \"m:up\"
+[tool.docker]
+startup_scripts = [\"hub-up\"]
+scrub_env = [\"WG_HUB_PRIVATE_KEY\", \"OTHER\"]
+",
+    );
+    assert_eq!(startup_scripts(&d).unwrap(), ["hub-up"]);
+    assert_eq!(scrub_env(&d).unwrap(), ["WG_HUB_PRIVATE_KEY", "OTHER"]);
+    let none = doc("[project.scripts]\nrun-app-x = \"m:main\"\n");
+    assert!(startup_scripts(&none).unwrap().is_empty() && scrub_env(&none).unwrap().is_empty());
+    let typo = doc("[project.scripts]\nrun-app-x = \"m:main\"\n[tool.docker]\nstartup_scripts = [\"hub-upp\"]\n");
+    let err = startup_scripts(&typo).unwrap_err().to_string();
+    assert!(err.contains("hub-upp") && err.contains("[project.scripts]"), "{err}");
+    let bad = doc("[tool.docker]\nscrub_env = \"WG_HUB_PRIVATE_KEY\"\n");
+    assert!(scrub_env(&bad).unwrap_err().to_string().contains("list of strings"));
+    let bad = doc("[tool.docker]\nstartup_scripts = [1]\n");
+    assert!(startup_scripts(&bad).unwrap_err().to_string().contains("list of strings"));
   }
 }
