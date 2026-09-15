@@ -90,7 +90,7 @@ Implementation details under the owner's 2026-09-15 ruling; listed so the owner 
 - Create: `aeth_devkit/docs/superpowers/specs/2026-09-14-hub-fetched-peer-config-design.md`, `aeth_devkit/docs/superpowers/plans/2026-09-15-devkit-dockerfile-windows-and-kept-jobs.md`
 - Create: `devkit-templates/docs/superpowers/specs/2026-09-14-hub-fetched-peer-config-design.md`, `devkit-templates/docs/superpowers/plans/2026-09-15-devkit-dockerfile-windows-and-kept-jobs.md`
 
-- [ ] **Step 1: Branch `aeth_devkit` from `main`**
+- [x] **Step 1: Branch `aeth_devkit` from `main`**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -99,7 +99,7 @@ git checkout main && git pull --ff-only
 git checkout -b feat/dockerfile-windows-and-kept-jobs
 ```
 
-- [ ] **Step 2: Copy the spec and this plan into `aeth_devkit` and commit**
+- [x] **Step 2: Copy the spec and this plan into `aeth_devkit` and commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -112,7 +112,7 @@ git commit -m "docs(superpowers): the hub design and its devkit plan, copied for
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 3: Branch `devkit-templates` from `main` and copy the two documents**
+- [x] **Step 3: Branch `devkit-templates` from `main` and copy the two documents**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/devkit-templates"
@@ -129,7 +129,7 @@ git commit -m "docs(superpowers): the hub design and its devkit plan, copied for
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 4: Tick this task in the `aeth_devkit` copy and commit the tick**
+- [x] **Step 4: Tick this task in the `aeth_devkit` copy and commit the tick**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -150,7 +150,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `pub(crate) enum Body { …, Window(String) }` (the name); `Gates::apply` emits a window's two marker lines verbatim and everything between them as usual. `find_marker` and `parse_body` stay `pub(crate)` and unchanged in signature; Task 2 calls them.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `marker_tests::marker_bodies_parse`, before the `for bad in […]` loop, add:
 
@@ -199,12 +199,12 @@ In `apply_tests`, after `lines_keep_their_indentation_and_crlf_is_normalised_to_
   }
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit" && cargo test -p aeth-devkit-setup gate::`
 Expected: compile error, `no variant named Window` (the parse test), or the new apply test failing with `unknown marker`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `gate.rs`, add the variant to `Body` (after `PassThrough`):
 
@@ -397,12 +397,12 @@ Replace the body of `Gates::apply` with this (the `If` and `PassThrough` arms ar
 
 Update the module doc's first line and the `apply` doc comment: "resolve every block against the swept verdicts and strip every marker but a window's pair (2.2, 2.3; hub design 9.3)".
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p aeth-devkit-setup gate::`
 Expected: every `gate::` test passes, the two new ones included.
 
-- [ ] **Step 5: Lint, tick, commit**
+- [x] **Step 5: Lint, tick, commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -426,7 +426,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `crate::gate::{find_marker, parse_body, Body::{Window, End}, Format::Dockerfile}` from Task 1.
 - Produces: `pub struct Window { pub name: String, pub open: usize, pub close: usize }`; `pub fn scan(lines: &[&str], what: &str) -> Result<Vec<Window>>`; `pub fn splice(rendered: &str, project: &str) -> Result<Spliced>` with `pub struct Spliced { pub text: String, pub details: Vec<String>, pub notes: Vec<String> }` (the spliced LF text, the change-log details, the advisories for windows the template lacks).
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `crates/aeth-devkit-setup/src/docker/windows.rs` with only the module doc and the tests for now:
 
@@ -498,12 +498,12 @@ mod tests {
 
 Add `pub mod windows;` to `src/docker/mod.rs` after `pub mod static_files;`.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test -p aeth-devkit-setup docker::windows::`
 Expected: compile errors, `cannot find function scan`, `cannot find type Window`.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Insert between the module doc and the tests:
 
@@ -605,12 +605,12 @@ pub fn splice(rendered: &str, project: &str) -> Result<Spliced> {
 }
 ```
 
-- [ ] **Step 4: Run the unit tests**
+- [x] **Step 4: Run the unit tests**
 
 Run: `cargo test -p aeth-devkit-setup docker::windows::`
 Expected: 2 passed.
 
-- [ ] **Step 5: Give the fixture Dockerfile the two windows**
+- [x] **Step 5: Give the fixture Dockerfile the two windows**
 
 In `crates/aeth-devkit-setup/tests/fixtures/docker/template.Dockerfile`, after the last builder-stage instruction (the `RUN --mount=type=cache,target=/root/.cache/uv \ … uv sync --frozen --no-dev --no-editable $extras` block) and before `# ---- Final stage ----`, insert:
 
@@ -632,7 +632,7 @@ In the final stage, directly before `WORKDIR /app` (the one after the `useradd` 
 
 so the file reads `… --create-home nonroot\n\n# Project additions to the final stage; …\n# !window final:\n# !end final\n\nWORKDIR /app`. This mirrors `devkit-container`'s real template (spec 9.3), minus the wireguard block the fixture never had.
 
-- [ ] **Step 6: Write the failing integration test**
+- [x] **Step 6: Write the failing integration test**
 
 Append to `crates/aeth-devkit-setup/tests/docker.rs`:
 
@@ -711,12 +711,12 @@ fn window_lines_survive_a_re_render_and_a_window_the_template_lacks_is_an_error(
 }
 ```
 
-- [ ] **Step 7: Run it to see it fail**
+- [x] **Step 7: Run it to see it fail**
 
 Run: `cargo test -p aeth-devkit-setup --test docker window_lines_survive`
 Expected: FAIL at the second run: the filled file is reported as drift (windows not yet spliced).
 
-- [ ] **Step 8: Splice in `static_files::apply`**
+- [x] **Step 8: Splice in `static_files::apply`**
 
 Replace the loop body of `apply` in `src/docker/static_files.rs` from `let Some(original) = original else {` through the `match decision.text(&proposal) { … }` block with:
 
@@ -766,12 +766,12 @@ Replace the loop body of `apply` in `src/docker/static_files.rs` from `let Some(
 
 Update the module doc's first sentence: "Whole-file replacement of `docker/Dockerfile`, rendered from the template inside the installed `devkit_container` package around the project's windows, shown as a diff and applied only on consent."
 
-- [ ] **Step 9: Run the integration test and the module's tests**
+- [x] **Step 9: Run the integration test and the module's tests**
 
 Run: `cargo test -p aeth-devkit-setup --test docker && cargo test -p aeth-devkit-setup docker::`
 Expected: all pass, `window_lines_survive_a_re_render_and_a_window_the_template_lacks_is_an_error` included.
 
-- [ ] **Step 10: Document the marker and the windows in `README.md`**
+- [x] **Step 10: Document the marker and the windows in `README.md`**
 
 In the **Template language** section: change "A marker whose word is not `if`, `end`, `service-block` or `rule` is a render error." to "A marker whose word is not `if`, `end`, `window`, `service-block` or `rule` is a render error." Add to the code block, after the last `!end` line:
 
@@ -786,7 +786,7 @@ After the paragraph on structural units, add:
 
 In the **Docker** bullet, after "`docker/Dockerfile` is created when missing; when present and different — ignoring CRLF/LF, and", insert "the project's `# !window` regions (see **Template language**), and" so it reads "…ignoring CRLF/LF, the project's `# !window` regions (see **Template language**), and written back in the file's own line endings…".
 
-- [ ] **Step 11: Lint, tick, commit**
+- [x] **Step 11: Lint, tick, commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -811,7 +811,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `pub release_workflow_jobs: Vec<String>` on `ProjectContext` (empty when the key is absent).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `context.rs`'s test module, after `release_workflow_is_on_unless_tool_devkit_turns_it_off`, add:
 
@@ -846,12 +846,12 @@ In `context.rs`'s test module, after `release_workflow_is_on_unless_tool_devkit_
   }
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `cargo test -p aeth-devkit-setup context::`
 Expected: compile error, `no field release_workflow_jobs`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `ProjectContext`, after the `release_workflow` field's doc and declaration, add:
 
@@ -903,12 +903,12 @@ In each of the eight test literals (`scaffold.rs` `ctx`, `static_files.rs` `rend
 grep -rn "release_workflow: true," crates/aeth-devkit-setup/src
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p aeth-devkit-setup`
 Expected: everything compiles and passes (the literals are the only other compile sites; `tests/*.rs` build contexts through `discover`).
 
-- [ ] **Step 5: Lint, tick, commit**
+- [x] **Step 5: Lint, tick, commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -932,7 +932,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `ctx.release_workflow_jobs` from Task 3; `aeth_devkit_core::compose::tree::{split_lines, top_level, child, child_indent, re_indent, apply_edits, Edit::Insert}` (existing).
 - Produces: `pub struct Kept { pub text: String, pub details: Vec<String>, pub notes: Vec<String> }`; `pub fn splice(rendered: &str, existing: &str, names: &[String]) -> Result<Kept>`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `crates/aeth-devkit-setup/src/kept_jobs.rs` with the module doc and tests:
 
@@ -994,12 +994,12 @@ mod tests {
 
 Add `pub mod kept_jobs;` to `lib.rs`'s module list between `pub mod json_merge;` and `pub mod lines;`.
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test -p aeth-devkit-setup kept_jobs::`
 Expected: compile error, `cannot find function splice`.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Insert between the module doc and the tests:
 
@@ -1063,12 +1063,12 @@ pub fn splice(rendered: &str, existing: &str, names: &[String]) -> Result<Kept> 
 }
 ```
 
-- [ ] **Step 4: Run the unit tests**
+- [x] **Step 4: Run the unit tests**
 
 Run: `cargo test -p aeth-devkit-setup kept_jobs::`
 Expected: 2 passed.
 
-- [ ] **Step 5: Change the fixture headers**
+- [x] **Step 5: Change the fixture headers**
 
 In both `crates/aeth-devkit-setup/tests/fixtures/templates/github/workflows/release.template.yml` and `release.rust.template.yml`, replace line 1
 
@@ -1091,7 +1091,7 @@ grep -rn "replaced on the next run" crates/ python/ tests/ README.md
 
 Expected: the two fixture files only (plus nothing in `src/`; `DEVKIT_WORKFLOW_HEADER` is the prefix).
 
-- [ ] **Step 6: Write the failing integration test**
+- [x] **Step 6: Write the failing integration test**
 
 Append to `crates/aeth-devkit-setup/tests/apply.rs`:
 
@@ -1146,12 +1146,12 @@ fn a_named_job_is_kept_through_the_re_render_and_a_missing_one_is_only_noted() {
 }
 ```
 
-- [ ] **Step 7: Run it to see it fail**
+- [x] **Step 7: Run it to see it fail**
 
 Run: `cargo test -p aeth-devkit-setup --test apply a_named_job_is_kept`
 Expected: FAIL at the header assertion or at "the kept job is not drift" (the job is replaced away).
 
-- [ ] **Step 8: Splice in `lib.rs` step 10b**
+- [x] **Step 8: Splice in `lib.rs` step 10b**
 
 Replace, inside `if ctx.release_workflow { … }`, the lines from `let rendered = templates::load(…)?;` through `changes.record_optional(&path, original.as_deref(), &rendered, details)?;` with:
 
@@ -1177,18 +1177,18 @@ Replace, inside `if ctx.release_workflow { … }`, the lines from `let rendered 
 
 Extend the step's comment: after "so drift is replaced and reported." add "The jobs named in `[tool.devkit].release-workflow-jobs` are the exception, copied out of the existing file (`kept_jobs`)."
 
-- [ ] **Step 9: Run the integration tests**
+- [x] **Step 9: Run the integration tests**
 
 Run: `cargo test -p aeth-devkit-setup --test apply`
 Expected: all pass, the new test and `release_workflow_is_installed_and_replaced_on_drift` (which now sees the two-line header) included.
 
-- [ ] **Step 10: Document the key in `README.md`**
+- [x] **Step 10: Document the key in `README.md`**
 
 In the **Release workflow** bullet, after "any drift is replaced and reported.", insert:
 
 > The jobs named in `[tool.devkit].release-workflow-jobs` (a list of job names) are the exception: each is copied out of the existing file into the rendered one, under `jobs` after the template's own, and reported as `kept job <name>`; a named job the file does not hold yet is a `note:`, and a name the template itself uses is an error.
 
-- [ ] **Step 11: Lint, tick, commit**
+- [x] **Step 11: Lint, tick, commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -1208,7 +1208,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:** none new.
 
-- [ ] **Step 1: The CI's checks, locally**
+- [x] **Step 1: The CI's checks, locally**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -1221,7 +1221,7 @@ git diff --exit-code -- python/aeth_devkit/_tasks_generated.py
 
 Expected: every command exits 0. (The Python suite and the task table are untouched by this plan; running them is the pre-merge full suite of AGENTS.md.)
 
-- [ ] **Step 2: The shipped template's windows, by inspection**
+- [x] **Step 2: The shipped template's windows, by inspection**
 
 The fixture of Task 2 mirrors `devkit-container`'s real `template.Dockerfile`; confirm the two agree on the windows' names and places, since the real one is only rendered end to end by Task 7:
 
@@ -1231,7 +1231,7 @@ grep -n "!window\|!end builder\|!end final\|WORKDIR /app\|---- Final"   "/d/SFT 
 
 Expected: in both files, `# !window builder:` / `# !end builder` sit before `# ---- Final stage ----`, and `# !window final:` / `# !end final` sit directly before the final stage's `WORKDIR /app`.
 
-- [ ] **Step 3: Push, open the PR, watch CI**
+- [x] **Step 3: Push, open the PR, watch CI**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -1258,7 +1258,7 @@ gh pr checks --watch
 
 Expected: every job green. The `Templates` job renders `devkit-templates` `main` (old header) through this tree, which is fine: the header is a comment.
 
-- [ ] **Step 4: Merge (owner's call), then release 15.1.0 (owner's go-ahead first)**
+- [x] **Step 4: Merge (owner's call), then release 15.1.0 (owner's go-ahead first)**
 
 The owner merges on GitHub, or says to. Then:
 
@@ -1276,7 +1276,7 @@ uv run poe release minor "Dockerfile windows and kept release jobs"
 
 Expected: the command bumps to 15.1.0, tags, and waits for the release workflow to attach and publish; it exits 0.
 
-- [ ] **Step 5: Tick and commit**
+- [x] **Step 5: Tick and commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -1389,7 +1389,7 @@ git push
 
 **Files:** none; the plan copy in `devkit-container` is ticked.
 
-- [ ] **Step 1: Re-run the last `main` CI run of `devkit-container`**
+- [x] **Step 1: Re-run the last `main` CI run of `devkit-container`**
 
 Its `ci/render.sh` installs the newest `aeth-devkit` from the index, so the release of Task 5 is all it needs:
 
@@ -1403,7 +1403,7 @@ gh run view "$id" --json jobs -q '.jobs[] | "\(.conclusion)\t\(.name)"'
 
 Expected: every job `success`, the `Render: dry-run both modes …` job included, with the run's log showing `devkit 15.1.0` or newer and both docker files listed.
 
-- [ ] **Step 2: Tick and commit in `devkit-container`**
+- [x] **Step 2: Tick and commit in `devkit-container`**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/devkit-container"
