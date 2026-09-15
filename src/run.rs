@@ -72,9 +72,15 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   } else {
     None
   };
-  let down = |t: &Option<BootTunnel>| {
+  // Broken after the tunnel is up (5.3): the interface down, `/fail` with the error, exit 1.
+  let down = |t: &Option<BootTunnel>, e: &anyhow::Error| {
     if let Some(t) = t {
       t.plan.interface.down();
+    }
+    if let Some(p) = &ping
+      && let Err(err) = ping::send(&ping::agent(), &p.url(Kind::Fail), &format!("{e:#}"))
+    {
+      eprintln!("devkit-container: ping Fail failed: {err}");
     }
   };
   // `prepare`, with the implicit folders of 4.4 and 5.7.
@@ -86,11 +92,11 @@ pub fn run(args: &RunArgs) -> Result<u8> {
     to_prepare.push(cache::DIR.to_string());
   }
   if let Err(e) = prepare::prepare(&args.app_root, &to_prepare, &mut prepare::chown_nonroot) {
-    down(&tunnel);
+    down(&tunnel, &e);
     return Err(e);
   }
   if supervise && let Err(e) = consent_dir() {
-    down(&tunnel);
+    down(&tunnel, &e);
     return Err(e);
   }
   if let Some(text) = tunnel.as_ref().and_then(|t| t.cache_text.as_deref())
@@ -98,19 +104,24 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   {
     log.line(&format!("cache write failed: {e:#}"));
   }
-  // A tunnel heartbeat left by an earlier run must not read as a stale tunnel.
-  if !wireguard {
-    let _ = std::fs::remove_file(heartbeat::logs_dir(&args.app_root).join(heartbeat::TUNNEL_FILE));
-  }
+  // A tunnel heartbeat left by an earlier run must not read as a live tunnel (a tolerated
+  // Disconnected boot writes none, 5.7) nor as a stale one; the first poll rewrites it.
+  let _ = std::fs::remove_file(heartbeat::logs_dir(&args.app_root).join(heartbeat::TUNNEL_FILE));
   if let Err(e) = run_startup_scripts(&args.app_root, &startup) {
-    down(&tunnel);
+    down(&tunnel, &e);
     return Err(e);
   }
   let exe = args.app_root.join(".venv").join("bin").join(&script);
   if supervise {
     let poll_secs = match &tunnel {
       Some(t) => t.plan.settings.poll_secs,
-      None => env("WG_POLL_SECS").and_then(|v| v.parse().ok()).unwrap_or(30),
+      None => match env("WG_POLL_SECS") {
+        None => 30,
+        Some(v) => match v.parse::<u64>() {
+          Ok(n) if n >= 1 => n,
+          _ => bail!("WG_POLL_SECS must be a whole number of seconds, at least 1"),
+        },
+      },
     };
     return supervisor::run(Plan {
       exe,
