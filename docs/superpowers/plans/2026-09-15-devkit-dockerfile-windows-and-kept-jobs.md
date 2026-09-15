@@ -37,7 +37,7 @@ The owner's later ruling on what "stop" means (2026-09-15): stop only when the f
 - The marker word is exactly `window`; the template writes `# !window builder:` … `# !end builder` and `# !window final:` … `# !end final` (spec 9.3). "Unlike every other marker its pair stays in the rendered file, so the next run can find it."
 - The key is exactly `[tool.devkit].release-workflow-jobs`, "a list of job names"; the hub's job is named `peers` (spec 3.7). "A named job the existing file does not hold is reported, not an error." "The key joins `[tool.devkit]`'s known keys, so an unknown key stays an error."
 - The header line of both release templates: "edits are replaced on the next run" gains "except the jobs named in `[tool.devkit].release-workflow-jobs`" (spec 3.7). The first line must keep the prefix ``# Installed and kept current by `devkit setup-project` `` because `lib.rs`'s `DEVKIT_WORKFLOW_HEADER` recognises a devkit-owned file by it.
-- A window in the project's file that the template does not have "is an error naming the window and its lines, never a silent drop" (spec 9.3).
+- A window in the project's file that the template does not have "is left out of the render: the template's omission is a choice, so its lines go with it, shown in the diff and named in a `note:`, never an error" (spec 9.3, owner ruling 2026-09-15).
 - Release order (spec 14): `aeth-devkit` first, then `devkit-templates`; the `devkit-container` render job is red until the `aeth-devkit` release and needs no change of its own.
 - Branching (spec 14, owner ruling 2026-09-15): the `aeth-devkit` work branches from `main`, not from the open `feat/review-everything-but-docker`; once merged, that branch is rebased onto the new `main` as part of this step.
 - Rust checks in `aeth_devkit` are the CI's: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`; Python: `uv sync` then `uv run pytest`. Run the targeted test while iterating and the full set once at the end of a task (AGENTS.md, Testing Workflow).
@@ -51,7 +51,7 @@ Implementation details under the owner's 2026-09-15 ruling; listed so the owner 
 1. A window opens with `# !window <name>:` on its own line (never structural, never trailing content) and closes only with `# !end <name>` on its own line; a bare `# !end` on a window is an error. Windows do not nest, and a name appears once per file. The name follows the label rule of `!if … as <label>`: one word of letters, digits, `_`, `-`.
 2. A window inside a false `!if` block disappears with the block, markers included. The shipped template never does this.
 3. The project's window lines replace the rendered window's lines verbatim (the template's windows are empty by contract, so nothing is lost).
-4. A window the template lacks is reported as an `error:` line (the run still writes everything else and exits 1 at the end, like a compose shape the engine cannot edit) and the Dockerfile is left whole. A `bail!` would abort the whole run for a Dockerfile problem, which the module's own rule reserves for template bugs.
+4. A window the template lacks (spec 9.3 as ruled) is dropped with its lines; the removal shows in the diff the step already prints and the file is replaced only on consent, and a `note:` names the window and its line count. A malformed window in the project's file (opened and never closed, a name twice) is different: the project's file cannot be read, so that is an `error:` line and the file is left whole, like a compose shape the engine cannot edit.
 5. In the project's Dockerfile only a `!window` line and the `!end` naming it count; any other marker-looking line (a project's own `# !note`) is content, never a render error.
 6. Change log: `kept N line(s) in window <name>` per window that carried lines, alongside the existing "replaced with the devkit template" detail.
 7. A kept job is its `  <name>:` line, the comment lines directly above it at the same indent, and every deeper line up to the next job (the compose engine's `Node`), re-indented to the rendered file's job indent, preceded by one blank line, inserted at the end of the rendered `jobs` mapping. Detail: `kept job <name>`.
@@ -424,7 +424,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `crate::gate::{find_marker, parse_body, Body::{Window, End}, Format::Dockerfile}` from Task 1.
-- Produces: `pub struct Window { pub name: String, pub open: usize, pub close: usize }`; `pub fn scan(lines: &[&str], what: &str) -> Result<Vec<Window>>`; `pub fn splice(rendered: &str, project: &str) -> Result<(String, Vec<String>)>` (the spliced LF text and the change-log details).
+- Produces: `pub struct Window { pub name: String, pub open: usize, pub close: usize }`; `pub fn scan(lines: &[&str], what: &str) -> Result<Vec<Window>>`; `pub fn splice(rendered: &str, project: &str) -> Result<Spliced>` with `pub struct Spliced { pub text: String, pub details: Vec<String>, pub notes: Vec<String> }` (the spliced LF text, the change-log details, the advisories for windows the template lacks).
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -466,24 +466,32 @@ mod tests {
   }
 
   #[test]
-  fn the_projects_lines_replace_the_templates_and_a_missing_window_is_named() {
+  fn the_projects_lines_replace_the_templates_and_a_missing_window_is_noted() {
     let project = "FROM old\n# !window builder:\nRUN one\n# !end builder\nFROM older\n# !window final:\nRUN two\nRUN three\n# !end final\nWORKDIR /app\n";
-    let (text, details) = splice(TPL, project).unwrap();
+    let s = splice(TPL, project).unwrap();
     assert_eq!(
-      text,
+      s.text,
       "FROM a\n# !window builder:\nRUN one\n# !end builder\nFROM b\n# !window final:\nRUN two\nRUN three\n# !end final\nWORKDIR /app\n"
     );
-    assert_eq!(details, vec!["kept 1 line(s) in window builder", "kept 2 line(s) in window final"]);
+    assert_eq!(s.details, vec!["kept 1 line(s) in window builder", "kept 2 line(s) in window final"]);
+    assert!(s.notes.is_empty());
     // No markers in the project's file: the template as rendered, its windows empty.
-    assert_eq!(splice(TPL, "FROM old\n").unwrap(), (TPL.to_string(), vec![]));
+    let s = splice(TPL, "FROM old\n").unwrap();
+    assert!(s.text == TPL && s.details.is_empty() && s.notes.is_empty());
     // Empty windows carry nothing and report nothing.
-    assert_eq!(splice(TPL, TPL).unwrap(), (TPL.to_string(), vec![]));
+    let s = splice(TPL, TPL).unwrap();
+    assert!(s.text == TPL && s.details.is_empty() && s.notes.is_empty());
     // Only the windows the project filled are touched; order in the file does not matter.
     let only_final = "# !window final:\nRUN two\n# !end final\n";
-    let (text, _) = splice(TPL, only_final).unwrap();
-    assert_eq!(text, TPL.replace("# !window final:\n", "# !window final:\nRUN two\n"));
-    let e = splice(TPL, "# !window extra:\nRUN mine\n# !end extra\n").unwrap_err().to_string();
-    assert!(e.contains("window `extra`") && e.contains("RUN mine"), "{e}");
+    assert_eq!(splice(TPL, only_final).unwrap().text, TPL.replace("# !window final:\n", "# !window final:\nRUN two\n"));
+    // A window the template lacks goes with its lines, and a note says so (9.3).
+    let s = splice(TPL, "# !window extra:\nRUN mine\nRUN more\n# !end extra\n# !window final:\nRUN two\n# !end final\n").unwrap();
+    assert_eq!(s.text, TPL.replace("# !window final:\n", "# !window final:\nRUN two\n"));
+    assert_eq!(s.details, vec!["kept 1 line(s) in window final"]);
+    assert_eq!(s.notes.len(), 1);
+    assert!(s.notes[0].contains("window `extra`") && s.notes[0].contains("2 line(s)"), "{}", s.notes[0]);
+    // A malformed window in the project's file is still an error: the file cannot be read.
+    assert!(splice(TPL, "# !window w:\nRUN a\n").is_err());
   }
 }
 ```
@@ -545,32 +553,44 @@ pub fn scan(lines: &[&str], what: &str) -> Result<Vec<Window>> {
   Ok(out)
 }
 
+/// What a splice produced: the text, the change-log details (one per window that carried
+/// lines) and the advisories (one per window of the project's file the template lacks).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Spliced {
+  pub text: String,
+  pub details: Vec<String>,
+  pub notes: Vec<String>,
+}
+
 /// `rendered` with the project's windows copied in: the lines between the project's markers
-/// replace the lines between the template's. Both texts are LF. Returns the text and one
-/// change-log detail per window that carried lines. A window the template lacks is an error
-/// naming it and its lines, never a silent drop (9.3).
-pub fn splice(rendered: &str, project: &str) -> Result<(String, Vec<String>)> {
+/// replace the lines between the template's. Both texts are LF. A window the template lacks
+/// goes with its lines (the template's omission is a choice, 9.3): the diff shows the removal
+/// and a note names it. `Err` only when the project's file cannot be read as windows.
+pub fn splice(rendered: &str, project: &str) -> Result<Spliced> {
   let theirs: Vec<&str> = project.lines().collect();
   let kept = scan(&theirs, "docker/Dockerfile")?;
+  let mut out = Spliced {
+    text: rendered.to_string(),
+    ..Spliced::default()
+  };
   if kept.is_empty() {
-    return Ok((rendered.to_string(), vec![]));
+    return Ok(out);
   }
   let mut ours: Vec<String> = rendered.lines().map(str::to_string).collect();
   let mine = scan(&ours.iter().map(String::as_str).collect::<Vec<_>>(), "the Dockerfile template")?;
-  let mut details = Vec::new();
   let mut edits: Vec<(&Window, Vec<String>)> = Vec::new();
   for w in &kept {
     let lines: Vec<String> = theirs[w.open + 1..w.close].iter().map(|l| l.to_string()).collect();
     let Some(target) = mine.iter().find(|t| t.name == w.name) else {
-      bail!(
-        "docker/Dockerfile: window `{}` is not in the template, so its {} line(s) would be lost:\n{}",
+      out.notes.push(format!(
+        "docker/Dockerfile: window `{}` is not in the template, so its {} line(s) are left out of the render.",
         w.name,
-        lines.len(),
-        lines.join("\n")
-      );
+        lines.len()
+      ));
+      continue;
     };
     if !lines.is_empty() {
-      details.push(format!("kept {} line(s) in window {}", lines.len(), w.name));
+      out.details.push(format!("kept {} line(s) in window {}", lines.len(), w.name));
     }
     edits.push((target, lines));
   }
@@ -579,9 +599,9 @@ pub fn splice(rendered: &str, project: &str) -> Result<(String, Vec<String>)> {
   for (t, lines) in edits {
     ours.splice(t.open + 1..t.close, lines);
   }
-  let mut text = ours.join("\n");
-  text.push('\n');
-  Ok((text, details))
+  out.text = ours.join("\n");
+  out.text.push('\n');
+  Ok(out)
 }
 ```
 
@@ -658,20 +678,35 @@ fn window_lines_survive_a_re_render_and_a_window_the_template_lacks_is_an_error(
   run(root, Mode::Ask, &["replace"], false);
   assert_eq!(read(root, "docker/Dockerfile"), fresh);
 
-  // A window the template does not have: an `error:` naming it and its lines, the file kept.
+  // A window the template does not have goes with its lines: shown as drift, replaced only
+  // on consent, and named in a note either way; never an error.
   let stray = fresh.replace(
     "# !end final\n\nWORKDIR /app",
     "# !end final\n\n# !window extra:\nRUN echo mine\n# !end extra\n\nWORKDIR /app",
   );
   write(root, "docker/Dockerfile", &stray);
+  let (changes, prompt, _) = run(root, Mode::Ask, &[""], false);
+  assert_eq!(prompt.asked.borrow().len(), 1, "the removal is a diff to consent to");
+  assert!(changes.errors.is_empty(), "{:?}", changes.errors);
+  assert!(
+    changes.notes.iter().any(|n| n.contains("window `extra`") && n.contains("1 line(s)")),
+    "{:?}",
+    changes.notes
+  );
+  assert_eq!(read(root, "docker/Dockerfile"), stray, "kept on an empty answer");
+  let (changes, _, _) = run(root, Mode::Ask, &["replace"], false);
+  assert_eq!(read(root, "docker/Dockerfile"), fresh);
+  assert!(changes.notes.iter().any(|n| n.contains("window `extra`")), "{:?}", changes.notes);
+
+  // A window the project's file opens and never closes cannot be read: an `error:`, file kept.
+  write(root, "docker/Dockerfile", &fresh.replace("# !end final\n", ""));
   let (changes, prompt, _) = run(root, Mode::Ask, &[], false);
   assert!(prompt.asked.borrow().is_empty());
   assert!(
-    changes.errors.iter().any(|e| e.contains("window `extra`") && e.contains("RUN echo mine")),
+    changes.errors.iter().any(|e| e.contains("window `final`") && e.contains("not closed")),
     "{:?}",
     changes.errors
   );
-  assert_eq!(read(root, "docker/Dockerfile"), stray);
   assert!(changes.managed.iter().any(|p| p.ends_with("Dockerfile")), "still managed");
 }
 ```
@@ -691,9 +726,10 @@ Replace the loop body of `apply` in `src/docker/static_files.rs` from `let Some(
       continue;
     };
     // The project's windows (hub design 9.3) go in before the comparison, so lines a
-    // project wrote there are never drift. A window the template lacks is drift the step
-    // cannot edit: an `error:` like an unmodelled compose shape, and the file stays whole.
-    let (rendered, kept) = match super::windows::splice(&rendered, &normalize_newlines(&original)) {
+    // project wrote there are never drift; a window the template lacks drops out with its
+    // lines, visibly (the diff) and named (a note). A file whose windows cannot be read is
+    // drift the step cannot edit: an `error:` like an unmodelled compose shape, file whole.
+    let spliced = match super::windows::splice(&rendered, &normalize_newlines(&original)) {
       Ok(spliced) => spliced,
       Err(e) => {
         changes.errors.push(format!("{e:#}"));
@@ -701,6 +737,8 @@ Replace the loop body of `apply` in `src/docker/static_files.rs` from `let Some(
         continue;
       }
     };
+    changes.notes.extend(spliced.notes);
+    let (rendered, kept) = (spliced.text, spliced.details);
     if normalize_newlines(&original) == rendered {
       // Managed, unchanged. CRLF-only drift is not drift: .gitattributes owns line endings.
       changes.record_optional(&path, Some(&original), &original, vec![])?;
@@ -744,7 +782,7 @@ In the **Template language** section: change "A marker whose word is not `if`, `
 
 After the paragraph on structural units, add:
 
-> A window belongs to the project. Every render copies the lines the project's existing file holds between the same window's markers into the rendered file unchanged and replaces everything outside; a fresh file renders with empty windows, and a file from before the windows existed gets them empty. Windows do not nest, and a window in the project's file that the template does not have is an `error:` naming it and its lines. Today only the Dockerfile template has windows (`builder`, after the builder stage's last instruction; `final`, before `WORKDIR /app`).
+> A window belongs to the project. Every render copies the lines the project's existing file holds between the same window's markers into the rendered file unchanged and replaces everything outside; a fresh file renders with empty windows, and a file from before the windows existed gets them empty. Windows do not nest. A window in the project's file that the template does not have is left out of the render with its lines: the template's omission is a choice, so the diff shows the removal and a `note:` names the window. Today only the Dockerfile template has windows (`builder`, after the builder stage's last instruction; `final`, before `WORKDIR /app`).
 
 In the **Docker** bullet, after "`docker/Dockerfile` is created when missing; when present and different — ignoring CRLF/LF, and", insert "the project's `# !window` regions (see **Template language**), and" so it reads "…ignoring CRLF/LF, the project's `# !window` regions (see **Template language**), and written back in the file's own line endings…".
 
@@ -1203,7 +1241,7 @@ gh pr create --base main --title "feat(setup): Dockerfile windows and kept relea
 
 Release-order step 1 of the WireGuard hub design (`docs/superpowers/specs/2026-09-14-hub-fetched-peer-config-design.md`, sections 3.7, 9.3, 9.4):
 
-- The `window` marker: `# !window <name>:` … `# !end <name>` is an always-kept block whose marker pair survives rendering. The Dockerfile step copies the lines a project wrote inside each window of its existing file into the same window of the rendered file, before the diff; a window the template lacks is an `error:` naming it and its lines.
+- The `window` marker: `# !window <name>:` … `# !end <name>` is an always-kept block whose marker pair survives rendering. The Dockerfile step copies the lines a project wrote inside each window of its existing file into the same window of the rendered file, before the diff; a window the template lacks is left out with its lines, shown in the diff and named in a note.
 - `[tool.devkit].release-workflow-jobs`: the named jobs are copied out of the existing `release.yml` into every re-render, under `jobs` after the template's own, and reported; a name the file lacks yet is a note.
 - The release templates' header says so (fixtures here; `devkit-templates` follows in its own PR).
 
@@ -1433,7 +1471,7 @@ State, in this order: the two releases and their versions; the `devkit-container
 
 ## Self-review
 
-**Spec coverage.** 3.7: the key (Task 3), the splice after the template's jobs and the change-log report (Task 4), "a named job the existing file does not hold is reported, not an error" (Task 4's notes), "the key joins the known keys, so an unknown key stays an error" (Task 3, existing test kept), the header line in `devkit-templates` (Task 6) and in the fixture (Task 4), "nothing else in setup-project or the release command changes" (no other file touched). 9.3: the marker word, its pair surviving (Task 1), the copy of window lines into the same window, empty windows on a fresh file and on a file from before the windows, the error naming the window and its lines (Task 2). 9.4: the marker word joining the accepted four, the Dockerfile step splicing before the diff (Tasks 1, 2); the stale-devkit guard needs no code (the old `unknown marker` error is what fires today). 13, `aeth-devkit`: every listed assertion has a test named above. 14 step 1: the release order (Tasks 5, 6), the branch from `main` and the rebase (Tasks 0, 8). `devkit-container`'s render job as the external proof (Task 7).
+**Spec coverage.** 3.7: the key (Task 3), the splice after the template's jobs and the change-log report (Task 4), "a named job the existing file does not hold is reported, not an error" (Task 4's notes), "the key joins the known keys, so an unknown key stays an error" (Task 3, existing test kept), the header line in `devkit-templates` (Task 6) and in the fixture (Task 4), "nothing else in setup-project or the release command changes" (no other file touched). 9.3: the marker word, its pair surviving (Task 1), the copy of window lines into the same window, empty windows on a fresh file and on a file from before the windows, a window the template lacks left out and named in a note (Task 2). 9.4: the marker word joining the accepted four, the Dockerfile step splicing before the diff (Tasks 1, 2); the stale-devkit guard needs no code (the old `unknown marker` error is what fires today). 13, `aeth-devkit`: every listed assertion has a test named above. 14 step 1: the release order (Tasks 5, 6), the branch from `main` and the rebase (Tasks 0, 8). `devkit-container`'s render job as the external proof (Task 7).
 
 **Placeholders.** None: every code step carries its code, every command its expected result. The real template's end-to-end render is Task 7, through the released devkit, since `setup-project` only reads the container template from a venv.
 

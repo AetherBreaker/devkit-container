@@ -864,8 +864,10 @@ every render `setup-project` copies the lines a project wrote between a window's
 existing Dockerfile into the same window of the rendered file, unchanged, and replaces everything
 outside the windows as today. A new file renders with empty windows; a file rendered before the
 windows existed has no markers, so its windows start empty and the diff shows the markers
-arriving. A window in the project's file that the template does not have is an error naming the
-window and its lines, never a silent drop. The hub's additions live in its `final` window (3.6).
+arriving. A window in the project's file that the template does not have is left out of the
+render: the template's omission is a choice, so its lines go with it, shown in the diff and named
+in a `note:`, never an error (owner ruling, 2026-09-15). The hub's additions live in its `final`
+window (3.6).
 
 ### 9.4 `aeth-devkit` and `devkit-templates`
 
@@ -1050,7 +1052,7 @@ re-render with the job spliced under `jobs` and reported; a named job the file l
 not an error; an unknown `[tool.devkit]` key is still refused; the fixture template's header line
 carries the new wording. The windows of 9.3: a Dockerfile with lines inside each window survives a
 re-render with the template applied around them; a file without markers renders with empty
-windows; a window the template lacks is an error naming it and its lines; the marker word is
+windows; a window the template lacks is left out, named in a note, never an error; the marker word is
 accepted by the gate pass and kept in the output.
 
 **`wireguard-hub`.** `peers.toml` validation, one test per rule; the `rules.v4` cross-check; the
