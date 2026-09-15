@@ -12,3 +12,9 @@
 - Generating the hub's `rules.v4` from a per-peer `allow` list in `peers.toml`, removing the
   duplicated addresses.
 - A data-plane probe (ping the hub's tunnel address each poll) as a second health signal.
+- Shorten the CI smoke job (about 8 minutes today). The env and fetched tests walk the tunnel
+  through its states in real time: the consent reply window (60 s) and the stop grace before
+  SIGKILL (30 s) are fixed constants, and WireGuard renews a handshake only every 120 s. Two
+  options, both spec decisions: make the reply window and the stop grace configurable so the
+  tests can set them to their floors, and run the env and fetched tests in parallel on the runner
+  (they use separate networks and volumes).
