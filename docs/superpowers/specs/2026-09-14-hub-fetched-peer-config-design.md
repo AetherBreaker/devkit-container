@@ -1062,7 +1062,10 @@ to stdin; the `/version` response; the heartbeat gating on the interface path an
 
 1. `aeth-devkit` and `devkit-templates`: the kept release job (3.7) and the Dockerfile windows
    (9.3). Nothing breaks without them, and both are needed before step 2's template can be
-   rendered anywhere and before the hub's first release.
+   rendered anywhere and before the hub's first release. This work branches from `aeth-devkit`'s
+   `main`, not from its open branch `feat/review-everything-but-docker`, which is unfinished; once
+   this step is merged, that branch is rebased onto the new `main` as part of this step (owner
+   ruling, 2026-09-15).
 2. `devkit-container`: everything in sections 5 to 9. Backward compatible: a spoke rendered before
    this release keeps its old compose lines and runs in environment mode. Its fetched-mode smoke
    test needs the fixture repository and the secret of section 11 in place first.
