@@ -118,7 +118,7 @@ Read by `run`; empty is unset; a failure names the variable, never its value.
 | `WG_PRIVATE_KEY` | this peer's private key; secret, scrubbed from the app | with `wireguard` |
 | `WG_HUB_URL` | `http://host[:port]` or `https://host[:port]` of the hub, no path; present means fetched mode | fetched mode |
 | `WG_HUB_REPO` | `owner/repo` of the hub's GitHub repository whose releases carry `peers.toml` | fetched mode |
-| `WG_HUB_TOKEN` | a fine-grained token with read access to that repository; secret, scrubbed; sent to `api.github.com` only. Optional to the binary (a public repository needs none); the rendered compose file requires it | no |
+| `WG_HUB_TOKEN` | a fine-grained token with read access to that repository; secret, scrubbed; sent to `api.github.com` only. Optional to the binary (a public repository needs none); the rendered compose file passes it through empty when unset | no |
 | `WG_ADDRESS` | environment mode: this peer's tunnel address, CIDR (`10.8.0.20/32`) | environment mode |
 | `WG_PEER_PUBLIC_KEY` | environment mode: the hub's public key | environment mode |
 | `WG_PEER_ENDPOINT` | environment mode: `host:port` of the hub | environment mode |

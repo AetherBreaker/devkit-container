@@ -34,7 +34,7 @@ services:
       - WG_PRIVATE_KEY=${WG_PRIVATE_KEY:?}
       - WG_HUB_URL=${WG_HUB_URL:?}
       - WG_HUB_REPO=${WG_HUB_REPO:?}
-      - WG_HUB_TOKEN=${WG_HUB_TOKEN:?}
+      - WG_HUB_TOKEN=${WG_HUB_TOKEN:-}
     # !end
     # !if keys("tool.docker.wireguard"):
     # !rule presence

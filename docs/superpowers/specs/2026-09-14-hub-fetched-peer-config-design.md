@@ -784,7 +784,7 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_PRIVATE_KEY` | spoke | yes | | `${WG_PRIVATE_KEY:?}` | yes |
 | `WG_HUB_URL` | spoke | fetched mode | | `${WG_HUB_URL:?}` | no |
 | `WG_HUB_REPO` | spoke | fetched mode | | `${WG_HUB_REPO:?}` | no |
-| `WG_HUB_TOKEN` | spoke | by the rendered compose file; the binary accepts its absence (4.2); `tunnel-probe` hand-edits the line to `${WG_HUB_TOKEN:-}` (10.1) | | `${WG_HUB_TOKEN:?}` | yes |
+| `WG_HUB_TOKEN` | spoke | no: the binary accepts its absence (4.2) | | `${WG_HUB_TOKEN:-}`, empty when unset (owner ruling, 2026-09-15; devkit-container 2.1.1) | yes |
 | `WG_POLL_SECS` | spoke | no | 30 | no | no |
 | `WG_STALE_SECS` | spoke | no | 180 | no | no |
 | `WG_HANDSHAKE_TIMEOUT_SECS` | spoke | no | 60 | no | no |
@@ -829,7 +829,7 @@ The spoke's environment block becomes:
       - WG_PRIVATE_KEY=${WG_PRIVATE_KEY:?}
       - WG_HUB_URL=${WG_HUB_URL:?}
       - WG_HUB_REPO=${WG_HUB_REPO:?}
-      - WG_HUB_TOKEN=${WG_HUB_TOKEN:?}
+      - WG_HUB_TOKEN=${WG_HUB_TOKEN:-}
     # !end
 ```
 
@@ -912,10 +912,10 @@ every image), so the release order of 14 is what keeps the two in step.
 - Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL=https://tunnels.sweetfiretobacco.com`,
   `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The six old peer values of 5.1, if
   present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
-  No token while the hub repository is public (owner ruling, 2026-09-15): `tunnel-probe`'s
-  compose line is hand-edited to `WG_HUB_TOKEN=${WG_HUB_TOKEN:-}`, which renders empty when
-  unset and the binary reads as absent (8, 4.2). The edit survives `setup-project`, whose
-  env-keys rule keeps a present key's value and only re-adds missing keys.
+  No token while the hub repository is public (owner ruling, 2026-09-15): the template renders
+  `WG_HUB_TOKEN=${WG_HUB_TOKEN:-}` from devkit-container 2.1.1, empty when unset, which the
+  binary reads as absent (8, 4.2). A compose file rendered earlier keeps its `:?` line, since
+  the env-keys rule keeps a present key's value; edit it by hand to match.
 - Enrol: the first start is refused with `not enrolled` and logs the public key; add the row to
   the hub's `peers.toml` (3.8), release the hub, redeploy the spoke.
 - Neither adopts consent in this change: the app-side helper is deferred (6.4), and
