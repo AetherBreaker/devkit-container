@@ -4,15 +4,15 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "aeth-devkit"
-version = "15.1.0"
+version = "15.1.1"
 source = { registry = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" }
 dependencies = [
     { name = "poethepoet" },
 ]
-sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/153/6512096783bd1/aeth_devkit-15.1.0.tar.gz", hash = "sha256:1536512096783bd1a0c0fb2771e26ecd4c2b4f3a7e30f413da6fa781d2275497" }
+sdist = { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/a25/c9c66f246f265/aeth_devkit-15.1.1.tar.gz", hash = "sha256:a25c9c66f246f26551e6c48350cdaf34c59722341b675c6b6b9f31dd5eef8604" }
 wheels = [
-    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/088/6cc8e03ac9cb2/aeth_devkit-15.1.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0886cc8e03ac9cb2038ba3c4520f09d423ff5b803e9ab4c2515c1a2a2fb0c37b" },
-    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/9a8/2b9d7b832e059/aeth_devkit-15.1.0-py3-none-win_amd64.whl", hash = "sha256:9a82b9d7b832e05994dcf0025266c082c484c36c097865916e9c86f72f4c8449" },
+    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/293/9b927dcffd499/aeth_devkit-15.1.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2939b927dcffd499104dc1f1d73b62b8e778af87fedd545c1ccc3b70b2f82e51" },
+    { url = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+f/7dd/9d090160d45bb/aeth_devkit-15.1.1-py3-none-win_amd64.whl", hash = "sha256:7dd9d090160d45bb87470b3d7ebb7dff24e4c2f34faae5cb390436f6ceeb3d2f" },
 ]
 
 [[package]]
@@ -128,7 +128,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aeth-devkit", specifier = ">=15.1.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
+    { name = "aeth-devkit", specifier = ">=15.1.1", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-claude-hooks", specifier = ">=1.0.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-poe-complete", specifier = ">=1.1.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
     { name = "devkit-templates", specifier = ">=1.3.0", index = "https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple" },
