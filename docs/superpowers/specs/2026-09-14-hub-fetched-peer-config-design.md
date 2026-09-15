@@ -938,6 +938,14 @@ key placeholder with the PC's own key, install with WireGuard for Windows. Re-do
 hub release that changes the `[hub]` section. Its firewall rule for the database port is the next
 phase's (section 11).
 
+Owner's ruling, 2026-09-15, after comparing this against a PC-side health agent (Python task or
+Rust service), hub-side peer probes, and a Linux node on the office LAN: this section stands as
+the first step. The comparison, the costs, the ruling and the install procedure are
+ScheduledReportAggregator's `docs/superpowers/specs/2026-09-15-office-db-pc-peer-design.md`. The
+upgrade path is a scheduled-task script on the PC that re-imports the conf asset when the hub's
+tag changes, then hub-side probes of every peer, then a PC-side agent for MSSQL health; each step
+gets its ruling here before it is built.
+
 ## 11. Decisions the owner delegated, and decisions reserved for the owner
 
 Delegated to this document and decided here:
