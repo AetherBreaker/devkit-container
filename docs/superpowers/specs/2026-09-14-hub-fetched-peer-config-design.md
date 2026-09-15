@@ -143,7 +143,8 @@ Recorded so they are not reopened.
 - **Startup scripts as a generic feature, minimal surface.** One ordered list of console script
   names, run as root, no arguments, no timeout, nonzero exit ends the container. `scrub_env`
   generalises the private-key scrubbing. Neither key is added to the pyproject template.
-- **Health model: Broken, Disconnected, Connected.** Local failure exits at once. A boot that does
+- **Health model: Broken, Disconnected, Connected.** Local failure ends the run, the app stopped
+  gracefully first when one is running (5.3). A boot that does
   not reach Connected is refused: a spoke that cannot connect at start is misconfigured or not
   enrolled, and that must fail loudly (5.2). At runtime a missing hub makes the container
   unhealthy and alerting but running, and 30 minutes of continuous disconnection triggers a
@@ -547,9 +548,10 @@ Evaluated every poll. Every transition is logged with its reason.
 
 - **Broken.** A local operation failed: the interface cannot be created or queried, a key, address
   or route is rejected by the kernel, a tool is missing, a startup script failed. Never the hub.
-  The supervisor brings the interface down, sends `/fail` with the error (best effort), and exits
-  1 with an `error:` line naming the failing command. Immediate, no retry, under both settings of
-  the switch.
+  At boot there is no app yet: the supervisor brings the interface down, sends `/fail` with the
+  error (best effort), and exits 1 with an `error:` line naming the failing command. At runtime
+  the app is stopped first, gracefully: SIGTERM, up to 30 s for it to exit, SIGKILL if it has
+  not; then the same three steps. No retry, under both settings of the switch.
 - **Disconnected.** The interface exists and holds the private key, but there is no fresh handshake
   (older than `WG_STALE_SECS`, or none). The reason is `no handshake`, or `endpoint unresolvable`
   after the endpoint command failed; under the switch, a boot that got no configuration adds
