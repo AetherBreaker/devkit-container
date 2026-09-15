@@ -178,12 +178,15 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     return None;
   }
   let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-  for chunk in bytes.chunks(4) {
+  let last = bytes.len() / 4 - 1;
+  for (n, chunk) in bytes.chunks(4).enumerate() {
     let mut acc: u32 = 0;
     let mut pad = 0;
     for (i, &b) in chunk.iter().enumerate() {
       let v = if b == b'=' {
-        if i < 2 {
+        // Padding belongs to the final group only; the length check above and the per-group
+        // byte count would otherwise let `AAA=` + 40 characters pass as a 32-byte key.
+        if i < 2 || n != last {
           return None;
         }
         pad += 1;
@@ -503,7 +506,14 @@ persistent_keepalive = 15
     let no_padding = "A".repeat(44);
     let double_padding = format!("{}==", "A".repeat(42));
     let bad_char = format!("{}*=", "A".repeat(42));
-    for bad in ["short=", no_padding.as_str(), double_padding.as_str(), bad_char.as_str()] {
+    let interior_padding = format!("AAA={}", "A".repeat(40));
+    for bad in [
+      "short=",
+      no_padding.as_str(),
+      double_padding.as_str(),
+      bad_char.as_str(),
+      interior_padding.as_str(),
+    ] {
       let text = good().replacen(&key('B'), bad, 1);
       let err = parse(&text).unwrap_err().to_string();
       assert!(err.contains("peers[0].public_key"), "{bad:?}: {err}");
