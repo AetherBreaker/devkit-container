@@ -1,11 +1,167 @@
-//! Wireguard mode (spec 6): the environment contract, `ip` + `wg set` bring-up with the keys
-//! over stdin, the first-handshake wait, and the stale-and-re-up rule. The rule is a pure
-//! state machine (`Assessor`) so it is tested with an injected clock; the shell-outs are
-//! `Tunnel`, exercised by the smoke test.
+//! Wireguard mode: the environment contract (spec 5.1, 8), the command planner every apply and
+//! re-apply is made of (5.2, 5.5, 5.6), and the Linux `Interface` that runs those commands.
+//! The planner is pure and tested on every platform; the shell-outs are exercised by the smoke
+//! tests.
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 
-pub const SECRET_VARS: [&str; 2] = ["WG_PRIVATE_KEY", "WG_PEER_PRESHARED_KEY"];
+use crate::bundle::Effective;
+
+/// Removed from the app's environment on both the spawn and the exec path (spec 7).
+pub const SECRET_VARS: [&str; 3] = ["WG_PRIVATE_KEY", "WG_PEER_PRESHARED_KEY", "WG_HUB_TOKEN"];
+
+/// The six variables of environment mode; any of them beside `WG_HUB_URL` is refused (5.1).
+const ENV_MODE_VARS: [&str; 6] = [
+  "WG_ADDRESS",
+  "WG_PEER_PUBLIC_KEY",
+  "WG_PEER_ENDPOINT",
+  "WG_PEER_ALLOWED_IPS",
+  "WG_PEER_PRESHARED_KEY",
+  "WG_PERSISTENT_KEEPALIVE",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+  /// The whole peer configuration from `WG_*` variables (5.1), kept for projects that have not
+  /// migrated.
+  Env {
+    effective: Effective,
+    preshared_key: Option<String>,
+  },
+  /// Fetched from the hub's GitHub release (4.1, 4.2).
+  Fetched {
+    hub_url: String,
+    repo: String,
+    token: Option<String>,
+  },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+  pub private_key: String,
+  pub mode: Mode,
+  /// `WG_TOLERATE_DISCONNECTED=1`: a boot that cannot connect runs anyway, and there is no
+  /// give-up (5.2 step 5, 6.1).
+  pub tolerate: bool,
+  pub poll_secs: u64,
+  pub stale_secs: u64,
+  pub handshake_timeout_secs: u64,
+  pub limit_secs: u64,
+  pub hold_limit_secs: u64,
+  pub version_poll_secs: u64,
+}
+
+impl Settings {
+  /// The contract of spec 5.1, 5.4 and 8. `get` is the environment, injected for tests. Empty
+  /// is unset. A failure names the variable and never echoes a value.
+  pub fn from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Settings> {
+    let var = |k: &str| get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let required = |k: &str| var(k).with_context(|| format!("{k} is not set; the wireguard mode needs it"));
+    let number = |k: &str, default: u64, min: u64| -> Result<u64> {
+      let n = match var(k) {
+        None => default,
+        Some(v) => v.parse().map_err(|_| anyhow!("{k} must be a whole number of seconds"))?,
+      };
+      if n < min {
+        bail!("{k} must be at least {min}");
+      }
+      Ok(n)
+    };
+    let private_key = required("WG_PRIVATE_KEY")?;
+    let mode = match var("WG_HUB_URL") {
+      Some(url) => {
+        if let Some(k) = ENV_MODE_VARS.iter().find(|k| var(k).is_some()) {
+          bail!("WG_HUB_URL is set together with {k}; fetched mode takes no peer variables");
+        }
+        Mode::Fetched {
+          hub_url: validate_hub_url(&url)?,
+          repo: validate_repo(&required("WG_HUB_REPO")?)?,
+          token: var("WG_HUB_TOKEN"),
+        }
+      }
+      None => {
+        let keepalive: u32 = match var("WG_PERSISTENT_KEEPALIVE") {
+          None => 25,
+          Some(v) => v
+            .parse()
+            .map_err(|_| anyhow!("WG_PERSISTENT_KEEPALIVE must be a whole number of seconds"))?,
+        };
+        if keepalive == 0 {
+          bail!(
+            "WG_PERSISTENT_KEEPALIVE must be nonzero: without a keepalive an idle tunnel never re-handshakes and would read as stale"
+          );
+        }
+        Mode::Env {
+          effective: Effective {
+            address: required("WG_ADDRESS")?,
+            hub_public_key: required("WG_PEER_PUBLIC_KEY")?,
+            endpoint: required("WG_PEER_ENDPOINT")?,
+            allowed_ips: required("WG_PEER_ALLOWED_IPS")?
+              .split(',')
+              .map(|s| s.trim().to_string())
+              .filter(|s| !s.is_empty())
+              .collect(),
+            keepalive,
+          },
+          preshared_key: var("WG_PEER_PRESHARED_KEY"),
+        }
+      }
+    };
+    let tolerate = match var("WG_TOLERATE_DISCONNECTED").as_deref() {
+      None => false,
+      Some("1") => true,
+      Some(_) => bail!("WG_TOLERATE_DISCONNECTED must be unset, empty or 1"),
+    };
+    let stale_secs: u64 = match var("WG_STALE_SECS") {
+      None => 180,
+      Some(v) => v.parse().map_err(|_| anyhow!("WG_STALE_SECS must be a whole number of seconds"))?,
+    };
+    if stale_secs < 150 {
+      bail!("WG_STALE_SECS must be at least 150: WireGuard renews the handshake only every 120 s");
+    }
+    Ok(Settings {
+      private_key,
+      mode,
+      tolerate,
+      poll_secs: number("WG_POLL_SECS", 30, 1)?,
+      stale_secs,
+      handshake_timeout_secs: number("WG_HANDSHAKE_TIMEOUT_SECS", 60, 1)?,
+      limit_secs: number("WG_DISCONNECTED_LIMIT_SECS", 1800, 1)?,
+      hold_limit_secs: number("WG_HOLD_LIMIT_SECS", 0, 0)?,
+      version_poll_secs: number("WG_VERSION_POLL_SECS", 300, 1)?,
+    })
+  }
+}
+
+/// `http://host[:port]` or `https://host[:port]`, one trailing slash stripped, nothing else
+/// after the host (spec 4.1).
+pub fn validate_hub_url(s: &str) -> Result<String> {
+  let bad = |why: &str| anyhow!("WG_HUB_URL must be http://host[:port] or https://host[:port] with no path ({why})");
+  let (scheme, rest) = ["https://", "http://"]
+    .into_iter()
+    .find_map(|p| s.strip_prefix(p).map(|rest| (p, rest)))
+    .ok_or_else(|| bad("the scheme is not http or https"))?;
+  let authority = rest.strip_suffix('/').unwrap_or(rest);
+  if authority.is_empty() {
+    return Err(bad("no host"));
+  }
+  if authority.contains(['/', '?', '#']) || authority.contains(char::is_whitespace) {
+    return Err(bad("a path, query or fragment follows the host"));
+  }
+  Ok(format!("{scheme}{authority}"))
+}
+
+/// `owner/repo`, both parts non-empty, characters `[A-Za-z0-9._-]` (spec 8).
+pub fn validate_repo(s: &str) -> Result<String> {
+  let ok = s.split('/').count() == 2
+    && s
+      .split('/')
+      .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')));
+  if !ok {
+    bail!("WG_HUB_REPO must be owner/repo");
+  }
+  Ok(s.to_string())
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -352,5 +508,137 @@ mod tests {
     assert_eq!(parse_latest_handshake(out, "pubkey="), Some(1757505600));
     assert_eq!(parse_latest_handshake("pubkey=\t0\n", "pubkey="), None, "0 means never");
     assert_eq!(parse_latest_handshake(out, "missing"), None);
+  }
+  const FETCHED: [(&str, &str); 3] = [
+    ("WG_PRIVATE_KEY", "priv"),
+    ("WG_HUB_URL", "https://tunnels.example.com/"),
+    ("WG_HUB_REPO", "AetherBreaker/wireguard-hub"),
+  ];
+
+  #[test]
+  fn fetched_mode_reads_the_hub_variables_and_the_defaults() {
+    let mut e = env(&FETCHED);
+    e.insert("WG_HUB_TOKEN".into(), "tok".into());
+    let s = Settings::from_env(&|k| e.get(k).cloned()).unwrap();
+    assert_eq!(
+      s.mode,
+      Mode::Fetched {
+        hub_url: "https://tunnels.example.com".into(),
+        repo: "AetherBreaker/wireguard-hub".into(),
+        token: Some("tok".into())
+      }
+    );
+    assert!(!s.tolerate);
+    assert_eq!(
+      (
+        s.poll_secs,
+        s.stale_secs,
+        s.handshake_timeout_secs,
+        s.limit_secs,
+        s.hold_limit_secs,
+        s.version_poll_secs
+      ),
+      (30, 180, 60, 1800, 0, 300)
+    );
+    let e = env(&FETCHED);
+    let s = Settings::from_env(&|k| e.get(k).cloned()).unwrap();
+    assert!(
+      matches!(s.mode, Mode::Fetched { token: None, .. }),
+      "the token is optional to the binary"
+    );
+  }
+
+  #[test]
+  fn environment_mode_builds_the_effective_configuration() {
+    let mut e = env(&REQUIRED);
+    e.insert("WG_PEER_PRESHARED_KEY".into(), "psk".into());
+    e.insert("WG_PERSISTENT_KEEPALIVE".into(), "10".into());
+    let s = Settings::from_env(&|k| e.get(k).cloned()).unwrap();
+    let Mode::Env { effective, preshared_key } = s.mode else {
+      panic!("environment mode")
+    };
+    assert_eq!(effective.address, "10.8.0.20/32");
+    assert_eq!(effective.hub_public_key, "pub");
+    assert_eq!(effective.endpoint, "hub:51820");
+    assert_eq!(effective.allowed_ips, ["10.8.0.0/24", "192.168.1.0/24"]);
+    assert_eq!(effective.keepalive, 10);
+    assert_eq!(preshared_key.as_deref(), Some("psk"));
+  }
+
+  #[test]
+  fn fetched_mode_refuses_every_peer_variable_by_name() {
+    for (k, v) in [
+      ("WG_ADDRESS", "10.8.0.20/32"),
+      ("WG_PEER_PUBLIC_KEY", "pub"),
+      ("WG_PEER_ENDPOINT", "hub:51820"),
+      ("WG_PEER_ALLOWED_IPS", "10.8.0.0/24"),
+      ("WG_PEER_PRESHARED_KEY", "psk"),
+      ("WG_PERSISTENT_KEEPALIVE", "25"),
+    ] {
+      let mut e = env(&FETCHED);
+      e.insert(k.into(), v.into());
+      let err = Settings::from_env(&|k| e.get(k).cloned()).unwrap_err().to_string();
+      assert!(err.contains("WG_HUB_URL") && err.contains(k), "{k}: {err}");
+      assert!(!err.contains("psk") && !err.contains("priv"), "{err}");
+    }
+    let mut e = env(&FETCHED);
+    e.remove("WG_HUB_REPO");
+    assert!(
+      Settings::from_env(&|k| e.get(k).cloned())
+        .unwrap_err()
+        .to_string()
+        .contains("WG_HUB_REPO")
+    );
+  }
+
+  #[test]
+  fn the_timers_are_validated_with_their_floors() {
+    for (k, v, needle) in [
+      ("WG_STALE_SECS", "149", "at least 150"),
+      ("WG_STALE_SECS", "x", "whole number"),
+      ("WG_POLL_SECS", "0", "at least 1"),
+      ("WG_HANDSHAKE_TIMEOUT_SECS", "0", "at least 1"),
+      ("WG_DISCONNECTED_LIMIT_SECS", "0", "at least 1"),
+      ("WG_VERSION_POLL_SECS", "0", "at least 1"),
+      ("WG_HOLD_LIMIT_SECS", "-1", "whole number"),
+      ("WG_TOLERATE_DISCONNECTED", "yes", "unset, empty or 1"),
+    ] {
+      let mut e = env(&FETCHED);
+      e.insert(k.into(), v.into());
+      let err = Settings::from_env(&|k| e.get(k).cloned()).unwrap_err().to_string();
+      assert!(err.contains(k) && err.contains(needle), "{k}={v}: {err}");
+    }
+    let mut e = env(&FETCHED);
+    e.insert("WG_HOLD_LIMIT_SECS".into(), "0".into());
+    e.insert("WG_STALE_SECS".into(), "150".into());
+    e.insert("WG_TOLERATE_DISCONNECTED".into(), "1".into());
+    let s = Settings::from_env(&|k| e.get(k).cloned()).unwrap();
+    assert!(s.tolerate && s.hold_limit_secs == 0 && s.stale_secs == 150);
+    e.insert("WG_TOLERATE_DISCONNECTED".into(), "".into());
+    assert!(!Settings::from_env(&|k| e.get(k).cloned()).unwrap().tolerate, "empty is unset");
+  }
+
+  #[test]
+  fn the_hub_url_is_a_scheme_and_a_host_with_no_path() {
+    assert_eq!(
+      validate_hub_url("https://tunnels.example.com/").unwrap(),
+      "https://tunnels.example.com"
+    );
+    assert_eq!(validate_hub_url("http://wireguard-hub:8000").unwrap(), "http://wireguard-hub:8000");
+    for bad in [
+      "tunnels.example.com",
+      "ftp://x",
+      "https://tunnels.example.com/version",
+      "https://tunnels.example.com//",
+      "https://x?y",
+      "https://x#y",
+      "https://",
+    ] {
+      assert!(validate_hub_url(bad).is_err(), "{bad:?} must be refused");
+    }
+    assert_eq!(validate_repo("AetherBreaker/wireguard-hub").unwrap(), "AetherBreaker/wireguard-hub");
+    for bad in ["wireguard-hub", "a/b/c", "/b", "a/", "a b/c", "https://github.com/a/b"] {
+      assert!(validate_repo(bad).is_err(), "{bad:?} must be refused");
+    }
   }
 }
