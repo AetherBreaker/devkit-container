@@ -784,7 +784,7 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_PRIVATE_KEY` | spoke | yes | | `${WG_PRIVATE_KEY:?}` | yes |
 | `WG_HUB_URL` | spoke | fetched mode | | `${WG_HUB_URL:?}` | no |
 | `WG_HUB_REPO` | spoke | fetched mode | | `${WG_HUB_REPO:?}` | no |
-| `WG_HUB_TOKEN` | spoke | by the rendered compose file; the binary accepts its absence (4.2) | | `${WG_HUB_TOKEN:?}` | yes |
+| `WG_HUB_TOKEN` | spoke | by the rendered compose file; the binary accepts its absence (4.2); `tunnel-probe` hand-edits the line to `${WG_HUB_TOKEN:-}` (10.1) | | `${WG_HUB_TOKEN:?}` | yes |
 | `WG_POLL_SECS` | spoke | no | 30 | no | no |
 | `WG_STALE_SECS` | spoke | no | 180 | no | no |
 | `WG_HANDSHAKE_TIMEOUT_SECS` | spoke | no | 60 | no | no |
@@ -912,6 +912,10 @@ every image), so the release order of 14 is what keeps the two in step.
 - Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL=https://tunnels.sweetfiretobacco.com`,
   `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The six old peer values of 5.1, if
   present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
+  No token while the hub repository is public (owner ruling, 2026-09-15): `tunnel-probe`'s
+  compose line is hand-edited to `WG_HUB_TOKEN=${WG_HUB_TOKEN:-}`, which renders empty when
+  unset and the binary reads as absent (8, 4.2). The edit survives `setup-project`, whose
+  env-keys rule keeps a present key's value and only re-adds missing keys.
 - Enrol: the first start is refused with `not enrolled` and logs the public key; add the row to
   the hub's `peers.toml` (3.8), release the hub, redeploy the spoke.
 - Neither adopts consent in this change: the app-side helper is deferred (6.4), and
@@ -958,7 +962,9 @@ Reserved for the owner and answered in the grounding pass of 2026-09-14:
   the per-flow rules, the office PC's firewall rule (10.2), `tunnel-probe`'s query (10.1) and the
   three checks of section 16 that need the database follow with that decision.
 - **The test project's name:** delegated to this document, `tunnel-probe` (above).
-- **The production token:** a fine-grained token on the `AetherBreaker` account with read-only
+- **The production token:** not created while the hub repository is public (owner ruling,
+  2026-09-15; 10.1 makes the compose line optional). When the repository goes private: a
+  fine-grained token on the `AetherBreaker` account with read-only
   access to the contents of `wireguard-hub` and nothing else, one-year expiry, rotated by the
   owner when it expires. An expired token surfaces as `config unavailable` in the spoke's log
   and, if the hub changes meanwhile, as the tunnel going Disconnected.
@@ -1121,8 +1127,8 @@ generated at enrolment (the private key in an ignored file beside the checkout, 
 committed), its row in wireguard-hub 1.1.0, whose bundle and `tunnel-probe.conf` asset carry it,
 and the hub's compose pinned to v1.1.0. The repository is public like the hub's, for the same
 reason (section 2). Left in step 4: the hub redeployed at v1.1.0 so its interface knows the peer,
-tunnel-probe deployed in Coolify with the four variables of 10.1 (the production token of section
-11 first), then ScheduledReportAggregator and the office PC.
+tunnel-probe deployed in Coolify with the three variables of 10.1 (no token while the hub is
+public), then ScheduledReportAggregator and the office PC.
 
 ## 15. TODO entries to record in this repo at implementation
 
