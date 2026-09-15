@@ -102,25 +102,6 @@ fn logs(container: &str) -> String {
   String::from_utf8_lossy(&docker(&["logs", container]).output().unwrap().stderr).into_owned()
 }
 
-fn wg_key(image: &str) -> (String, String) {
-  let private = text(&ok(&mut docker(&["run", "--rm", "--entrypoint", "wg", image, "genkey"])))
-    .trim()
-    .to_string();
-  let public = {
-    use std::io::Write as _;
-    let mut child = docker(&["run", "--rm", "-i", "--entrypoint", "wg", image, "pubkey"])
-      .stdin(std::process::Stdio::piped())
-      .stdout(std::process::Stdio::piped())
-      .spawn()
-      .unwrap();
-    child.stdin.take().unwrap().write_all(private.as_bytes()).unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
-    text(&out).trim().to_string()
-  };
-  (private, public)
-}
-
 #[test]
 #[ignore = "needs docker, the network and the wireguard kernel module; run with --ignored"]
 fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {

@@ -275,6 +275,26 @@ pub fn dockerfile(root: &Path, wheel_name: &str, wireguard: bool) -> String {
   out
 }
 
+/// A fresh WireGuard key pair, generated with the image's own `wg`.
+pub fn wg_key(image: &str) -> (String, String) {
+  let private = text(&ok(&mut docker(&["run", "--rm", "--entrypoint", "wg", image, "genkey"])))
+    .trim()
+    .to_string();
+  let public = {
+    use std::io::Write as _;
+    let mut child = docker(&["run", "--rm", "-i", "--entrypoint", "wg", image, "pubkey"])
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .spawn()
+      .unwrap();
+    child.stdin.take().unwrap().write_all(private.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    text(&out).trim().to_string()
+  };
+  (private, public)
+}
+
 pub fn docker(args: &[&str]) -> Command {
   let mut c = Command::new("docker");
   c.args(args);
