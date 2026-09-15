@@ -87,7 +87,7 @@ jobs:
           DEVKIT_SMOKE_WG_HUB_TOKEN: ${{ secrets.DEVKIT_SMOKE_WG_HUB_TOKEN }}
         run: |
           uv sync
-          cargo test --test docker_smoke --test docker_supervisor --test docker_fetched -- --ignored --nocapture
+          cargo test --no-fail-fast --test docker_smoke --test docker_supervisor --test docker_fetched -- --ignored --nocapture
 
   # The two templates meet the released devkit's parser here, before a release of this repo.
   render:
