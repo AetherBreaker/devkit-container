@@ -1,8 +1,6 @@
 //! The bundle contract (spec 3.2, 4.1, 4.3): the strict tag, the peer table parsed and
 //! validated, the spoke's own entry and the effective configuration it yields. Pure: no IO and
 //! no network, so it runs and is tested on every platform.
-#![allow(dead_code)] // until run and the supervisor use it (task 11)
-
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -308,6 +306,49 @@ impl PartialEq for Effective {
   }
 }
 
+impl Effective {
+  fn short_key(&self) -> &str {
+    self.hub_public_key.get(..8).unwrap_or(&self.hub_public_key)
+  }
+
+  /// One line for the log, the hub key shortened to eight characters.
+  pub fn describe(&self) -> String {
+    format!(
+      "address {}, endpoint {}, allowed IPs {}, keepalive {}, hub key {}…",
+      self.address,
+      self.endpoint,
+      self.allowed_ips.join(","),
+      self.keepalive,
+      self.short_key()
+    )
+  }
+
+  /// The fields that differ, `old -> new`, for the re-apply line (spec 5.5).
+  pub fn diff(&self, new: &Effective) -> String {
+    let mut parts = Vec::new();
+    if self.hub_public_key != new.hub_public_key {
+      parts.push(format!("hub key {}… -> {}…", self.short_key(), new.short_key()));
+    }
+    if self.address != new.address {
+      parts.push(format!("address {} -> {}", self.address, new.address));
+    }
+    if self.endpoint != new.endpoint {
+      parts.push(format!("endpoint {} -> {}", self.endpoint, new.endpoint));
+    }
+    if self.allowed_ips.iter().collect::<BTreeSet<_>>() != new.allowed_ips.iter().collect::<BTreeSet<_>>() {
+      parts.push(format!(
+        "allowed IPs {} -> {}",
+        self.allowed_ips.join(","),
+        new.allowed_ips.join(",")
+      ));
+    }
+    if self.keepalive != new.keepalive {
+      parts.push(format!("keepalive {} -> {}", self.keepalive, new.keepalive));
+    }
+    parts.join(", ")
+  }
+}
+
 /// The `[[peers]]` row whose key is `public_key`, as the effective configuration; `None` is "not
 /// enrolled". The hub's own key never matches: it is not a peer of itself.
 pub fn select(bundle: &Bundle, public_key: &str) -> Option<Effective> {
@@ -531,6 +572,31 @@ persistent_keepalive = 15
         .unwrap_err()
         .to_string()
         .contains("hub_version")
+    );
+  }
+  #[test]
+  fn describe_and_diff_shorten_keys_and_name_only_what_changed() {
+    let b = parse(&good()).unwrap();
+    let old = select(&b, &key('B')).unwrap();
+    assert_eq!(
+      old.describe(),
+      format!(
+        "address 10.8.0.10/32, endpoint tunnels.example.com:51820, allowed IPs 10.8.0.0/24, keepalive 25, hub key {}…",
+        "A".repeat(8)
+      )
+    );
+    assert_eq!(old.diff(&old), "");
+    let mut new = old.clone();
+    new.address = "10.8.0.11/32".into();
+    new.keepalive = 15;
+    new.hub_public_key = key('Z');
+    assert_eq!(
+      old.diff(&new),
+      format!(
+        "hub key {}… -> {}…, address 10.8.0.10/32 -> 10.8.0.11/32, keepalive 25 -> 15",
+        "A".repeat(8),
+        "Z".repeat(8)
+      )
     );
   }
 }

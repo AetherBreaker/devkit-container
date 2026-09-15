@@ -1,7 +1,6 @@
 //! The cached bundle (spec 4.4): the last bundle a fetch validated, in the entrypoint's own
 //! folder under `persisted_data`, so a boot can reach Connected with GitHub down. Best effort at
 //! every call site and never a health signal; the folder is `prepare`'s to create.
-#![allow(dead_code)] // until run and the supervisor use it (task 11)
 
 use std::path::{Path, PathBuf};
 

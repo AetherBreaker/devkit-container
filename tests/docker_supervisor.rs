@@ -40,6 +40,7 @@ def main() -> None:
         "wg_psk_present": "WG_PEER_PRESHARED_KEY" in os.environ,
         "supervised_ping": os.environ.get("DEVKIT_SUPERVISED_PING"),
         "heartbeat_slug": os.environ.get("HEARTBEAT_SLUG"),
+        "consent_socket": os.environ.get("DEVKIT_CONSENT_SOCKET"),
     }
     with open("/app/persisted_data/report.json", "w") as f:
         json.dump(r, f)
@@ -181,6 +182,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
     assert_eq!(report[cap], "0000000000000000", "{cap}");
   }
   assert_eq!(report["supervised_ping"], "1");
+  assert_eq!(report["consent_socket"], "/run/devkit/consent.sock");
   assert_eq!(report["heartbeat_slug"], "smoke");
   // The supervisor itself dropped to 999 (no tunnel to keep root for).
   let top = text(&ok(&mut docker(&["top", &app, "-o", "uid,pid,comm"])));
@@ -307,6 +309,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   assert_eq!(report["wg_private_key_present"], false);
   assert_eq!(report["wg_psk_present"], false);
   assert_eq!(report["supervised_ping"], "1");
+  assert_eq!(report["consent_socket"], "/run/devkit/consent.sock");
   let stat = text(&exec_ok(
     &spoke,
     &["stat", "-c", "%a %u", "/app/persisted_data/logs/wireguard-heartbeat.txt"],

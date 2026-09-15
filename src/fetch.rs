@@ -2,7 +2,6 @@
 //! release (4.2) over `ureq`, and `obtain`, the version → bundle → entry sequence the boot and
 //! the worker thread run. Errors name the step and the HTTP status, never the token or a body.
 //! The two GitHub hosts are ordinary inputs, so the tests point them at a local listener.
-#![allow(dead_code)] // until run and the supervisor use it (task 11)
 
 use anyhow::{Result, anyhow, bail};
 

@@ -2,7 +2,6 @@
 //! clock: Connected or Disconnected with a reason, the continuous-disconnected clock, the
 //! alternating repair, and the consent asks up to the give-up. Every shell-out and network call
 //! is the supervisor's; this decides what to do at each poll.
-#![allow(dead_code)] // until run and the supervisor use it (task 11)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
