@@ -39,7 +39,8 @@ largely unreviewed. They are not advisory.
    ordering, file locations, retry counts, and "the code already does X so I will keep X". However
    small or obvious the gap looks, the owner becomes the source of truth for it before anything
    else continues, and the answer is written into this document before the plan or the code
-   changes.
+   changes. Log lines and error wording this document does not fix verbatim are the exception:
+   they are the implementer's, and the owner does not review them.
 3. **The plan carries rules 1 and 2 verbatim in its own preamble**, so an agent that reads only the
    plan still sees them.
 4. **The plan is executed inline** by the session that holds it, not delegated to subagents.
