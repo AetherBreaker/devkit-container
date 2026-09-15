@@ -84,10 +84,11 @@ bundle, and renders one human-readable `.conf` per peer for peers that are not c
                                             |                                |
                                   +---------+--------------------------------v---+
                                   | spoke container (devkit-container run)       |
-                                  |  1. wg0 + private key   (local: Broken?)     |
+                                  |  1. wg0 + private key       (local: Broken)  |
                                   |  2. version -> bundle -> my entry -> apply   |
-                                  |  3. spawn app; poll; re-check every 5 min    |
-                                  |  4. disconnected 30 min -> ask app -> SIGINT |
+                                  |  3. handshake within 60 s, else refused      |
+                                  |  4. spawn app; poll; re-check every 5 min    |
+                                  |  5. disconnected 30 min -> ask app -> SIGINT |
                                   +----------------------------------------------+
 ```
 
@@ -142,15 +143,21 @@ Recorded so they are not reopened.
 - **Startup scripts as a generic feature, minimal surface.** One ordered list of console script
   names, run as root, no arguments, no timeout, nonzero exit ends the container. `scrub_env`
   generalises the private-key scrubbing. Neither key is added to the pyproject template.
-- **Health model: Broken, Disconnected, Connected.** Local failure exits at once; a missing hub
-  makes the container unhealthy and alerting but running; 30 minutes of continuous disconnection
-  triggers a shutdown. The app starts as soon as the local bring-up and the bounded boot fetch
-  (5.2) are done, without waiting for the first handshake, because most of a spoke's work does
-  not need the tunnel and the runtime model already accepts running with the hub down. Rejected:
-  holding the app for the first handshake; exiting after 60 s as today; a tunnel status file for
+- **Health model: Broken, Disconnected, Connected.** Local failure exits at once. A boot that does
+  not reach Connected is refused: a spoke that cannot connect at start is misconfigured or not
+  enrolled, and that must fail loudly (5.2). At runtime a missing hub makes the container
+  unhealthy and alerting but running, and 30 minutes of continuous disconnection triggers a
+  shutdown. One dumb switch, `WG_TOLERATE_DISCONNECTED`, turns every connect failure into "run
+  anyway", for an emergency where a connection cannot happen for an external reason; it does not
+  care which reason, and Broken stays fatal under it. Rejected: starting the app before the first
+  handshake (it hides a misconfiguration behind a running container); a tunnel status file for
   the app to read (the heartbeat file and the ping already carry the state).
 - **`restart: no` stays.** A hub outage longer than 30 minutes stops every spoke until it is
-  redeployed. Chosen for an unambiguous state; the owner accepted the manual redeploy.
+  redeployed. Chosen for an unambiguous state; the owner accepted the manual redeploy. The switch
+  above is the escape hatch for an outage known to be long.
+- **An explicitly removed peer shuts down.** A fetched bundle that is valid and has no entry for
+  this key while a configuration is applied is the hub's instruction, not a connectivity failure:
+  alert, then shut down (5.5), under both settings of the switch.
 - **Shutdown consent over a Unix socket the app opens if it participates.** Non-participation is
   indistinguishable from "go ahead", so no existing app changes. No upper bound on holding by
   default; a knob exists. The supervisor's side ships now; the app-side helper in `aeth_ext` is
@@ -166,10 +173,10 @@ Recorded so they are not reopened.
 - **The supervisor never waits on the network or on the app inside its loop.** The version check
   with its fetch, and the consent ask, each run on a worker thread, one of each in flight, and the
   loop acts on the result at the poll after the thread completes; the loop wakes at once on a
-  signal or on the child's exit, and otherwise every 250 ms; the one inline network wait is the
-  bounded boot fetch (5.2). Rejected: an async runtime in the binary (the HTTP, socket and
-  subprocess calls are blocking and would run on worker threads underneath anyway, and PID 1's
-  reaping of every orphan stays hand-written either way).
+  signal or on the child's exit, and otherwise every 250 ms; the boot's own fetch and handshake
+  wait happen before the app exists (5.2). Rejected: an async runtime in the binary (the HTTP,
+  socket and subprocess calls are blocking and would run on worker threads underneath anyway, and
+  PID 1's reaping of every orphan stays hand-written either way).
 - **The repair while Disconnected alternates** the endpoint re-set with the interface
   down-and-up (5.6), and the endpoint is the last command of every apply (5.2), so a
   name-resolution failure leaves a complete interface lacking only the endpoint.
@@ -390,10 +397,12 @@ template), so a broken table is caught before a release is attempted.
 
 ### 3.8 Enrolling a peer
 
-A spoke logs its derived public key at every start (existing behaviour). Enrolment is: add a
-`[[peers]]` row with that key and the next address from the plan, add the flow to `rules.v4` if the
-peer may reach the database (next phase, 3.3), release the hub. Running spokes pick the change up
-within the version poll interval (5.5). Nothing on the spoke changes.
+A spoke logs its derived public key at every start and, when the hub's bundle lacks it, refuses
+to start with `not enrolled` and that key (5.2). Enrolment is: take the key from that log, add a
+`[[peers]]` row with it and the next address from the plan, add the flow to `rules.v4` if the peer
+may reach the database (next phase, 3.3), release the hub, redeploy the spoke. A running, enrolled
+spoke picks up a later change to its row within the version poll interval (5.5) without a
+redeploy.
 
 ## 4. The bundle contract
 
@@ -468,10 +477,11 @@ under `persisted_data`. The folder `persisted_data/wireguard` is the entrypoint'
 entries, without appearing in that key, and it is not part of the mount check, since a cache that
 turns out unbacked still works and merely does not outlive the container. Every write is best
 effort: a failure is one log line and never a health signal. The bundle fetched at boot is held in
-memory and written right after `prepare` (5.2 step 4), once the folder exists; runtime writes go
+memory and written right after `prepare` (5.2 step 6), once the folder exists; runtime writes go
 straight there. At boot, when the version endpoint or the fetch fails, the cache is read and
 validated (3.2) and, if it holds an entry for this spoke, used as the configuration, logged as
-`using cached bundle <hub_version>`. A fresh fetch always wins over the cache. A cache that fails
+`using cached bundle <hub_version>`. A cache with no entry for this spoke counts as no cache: it
+is not the hub's word on enrolment. A fresh fetch always wins over the cache. A cache that fails
 validation is ignored and overwritten by the next successful fetch.
 
 ## 5. Spoke behaviour in `devkit-container run`
@@ -491,37 +501,45 @@ the conflicting variable. `WG_HUB_REPO` is required in fetched mode; `WG_HUB_TOK
 the binary (4.2). The health model, timers, consent and exit codes of 5.3 to 5.6 apply in both
 modes; version polling and the cache apply in fetched mode only.
 
-### 5.2 Boot sequence, fetched mode
+### 5.2 Boot sequence
 
 Root check, `pyproject.toml`, resolution of the run script and the startup scripts, and the mount
-check, as today; then the ping is configured (5.4), before the tunnel, so a Broken at boot can
-send `/fail`. Then:
+check, as today; then the ping is configured (5.4), before the tunnel, so a refused start can
+send `/fail`. Then, all before the app exists:
 
 1. Preflight (`wg`, `ip` on PATH), `ip link add dev wg0 type wireguard`, `wg set wg0 private-key`
    over stdin, log the derived public key. A failure here is **Broken** (5.3).
-2. Obtain a configuration: version endpoint (4.1), then fetch (4.2), then select (4.3). On any
-   failure, the cache (4.4). On no usable configuration, continue with none; the tunnel state is
-   Disconnected with reason `config unavailable` or `not enrolled`. This boot fetch is the one
-   network wait done inline: it is bounded by the request timeouts of 4.1 and 4.2 (at most four
-   requests of 10 s each), and it happens before the app exists so that a Broken apply in step 3
-   never has an app to stop.
-3. If a configuration was obtained, apply it, in this order: `wg set wg0 peer <hub key>
-   allowed-ips <cidrs> persistent-keepalive <n>`; `ip address add <address> dev wg0`;
-   `ip link set up dev wg0`; one `ip route replace <cidr> dev wg0` per allowed IP; last,
-   `wg set wg0 peer <hub key> endpoint <endpoint>`. The endpoint is the last command of every
-   apply (here, in 5.5 and in the re-up of 5.6) because it is the one command that resolves a
-   name: a DNS failure then leaves a complete interface lacking only the endpoint, and the repair
-   is exactly a re-set. Classification of failures per 5.3.
-4. `prepare`, which also creates and chowns the implicit folders `persisted_data/wireguard` (4.4)
+2. Obtain the configuration. Environment mode: from the variables of 5.1. Fetched mode: version
+   endpoint (4.1), then fetch (4.2), then select (4.3); when the version endpoint or the fetch
+   fails, the cache (4.4). The two outcomes that are not a configuration: `config unavailable`
+   (no bundle and no usable cache) and `not enrolled in <tag>: no entry for <public key>; turn
+   [tool.docker].wireguard off or enrol the key, then redeploy` (the hub's bundle is valid and
+   lacks this key). This is the one network wait done inline: it is bounded by the request
+   timeouts of 4.1 and 4.2, at most four requests of 10 s each.
+3. Apply it, in this order: `wg set wg0 peer <hub key> allowed-ips <cidrs>
+   persistent-keepalive <n>`; `ip address add <address> dev wg0`; `ip link set up dev wg0`; one
+   `ip route replace <cidr> dev wg0` per allowed IP; last, `wg set wg0 peer <hub key> endpoint
+   <endpoint>`. The endpoint is the last command of every apply (here, in 5.5 and in the re-up of
+   5.6) because it is the one command that resolves a name: a DNS failure then leaves a complete
+   interface lacking only the endpoint, and the repair is exactly a re-set. Classification per
+   5.3: a local failure is Broken; the endpoint failing is `endpoint unresolvable`.
+4. Wait for the first handshake, polling `wg show wg0 latest-handshakes` every 500 ms, for up to
+   `WG_HANDSHAKE_TIMEOUT_SECS` (5.4). None is `no wireguard handshake with <endpoint> within <n> s`.
+5. **The gate.** By default a boot that has not reached Connected here is refused: `wg0` comes
+   down, `/fail` goes out with the reason from step 2, 3 or 4, and the binary exits 1 with the
+   same text as its `error:` line. Something is wrong and it must fail loudly. With
+   `WG_TOLERATE_DISCONNECTED=1` (section 8) the spoke instead logs the reason, sends `/fail`
+   once, and carries on into step 6 with the tunnel Disconnected under that reason and, when step
+   2 got none, no configuration applied. Broken is exit 1 under both settings.
+6. `prepare`, which also creates and chowns the implicit folders `persisted_data/wireguard` (4.4)
    and `persisted_data/logs` (5.7); the cache write of the bundle held from step 2, if step 2
    fetched one; startup scripts (none for a spoke unless declared); scrubbing; privilege drop;
-   spawn the app. **The app starts here regardless of tunnel state.**
-5. Enter the poll loop with the disconnected clock at zero and the boot-alert timer running. The
-   loop wakes at once on a signal or on the child's exit, and otherwise every 250 ms. It never
-   waits on the network or on the app: the version check with its fetch (5.5, 5.6) and the
-   consent ask (6.3) each run on a worker thread, one of each in flight at a time, and the loop
-   acts on the result at the first poll after the thread completes. The local `wg` and `ip`
-   commands run inline, as today.
+   spawn the app.
+7. Enter the poll loop with the disconnected clock at zero. The loop wakes at once on a signal or
+   on the child's exit, and otherwise every 250 ms. It never waits on the network or on the app:
+   the version check with its fetch (5.5, 5.6) and the consent ask (6.3) each run on a worker
+   thread, one of each in flight at a time, and the loop acts on the result at the first poll
+   after the thread completes. The local `wg` and `ip` commands run inline, as today.
 
 ### 5.3 The three states, and classification
 
@@ -530,21 +548,23 @@ Evaluated every poll. Every transition is logged with its reason.
 - **Broken.** A local operation failed: the interface cannot be created or queried, a key, address
   or route is rejected by the kernel, a tool is missing, a startup script failed. Never the hub.
   The supervisor brings the interface down, sends `/fail` with the error (best effort), and exits
-  1 with an `error:` line naming the failing command. Immediate, no retry.
+  1 with an `error:` line naming the failing command. Immediate, no retry, under both settings of
+  the switch.
 - **Disconnected.** The interface exists and holds the private key, but there is no fresh handshake
-  (older than `WG_STALE_SECS`, or none), or no configuration has been obtained. The tunnel
-  heartbeat is not written, so Docker turns unhealthy. Repairs run every poll (5.6). The
-  continuous-disconnected clock runs.
+  (older than `WG_STALE_SECS`, or none). The reason is `no handshake`, or `endpoint unresolvable`
+  after the endpoint command failed; under the switch, a boot that got no configuration adds
+  `config unavailable` and `not enrolled`. The tunnel heartbeat is not written, so Docker turns
+  unhealthy. Repairs run every poll (5.6). The continuous-disconnected clock runs.
 - **Connected.** `wg show wg0 latest-handshakes` reports a handshake younger than `WG_STALE_SECS`.
   The tunnel heartbeat is written, the clock resets, a pending shutdown (section 6) is cancelled.
 
 | Operation | A failure means |
 | --- | --- |
 | `wg` or `ip` missing; `ip link add`; `wg set private-key`; `ip address add/replace/delete`; `ip link set up`; `ip route replace/delete`; `wg set peer ... allowed-ips/persistent-keepalive`; `wg set peer ... remove`; `wg show` on an existing interface; `ip link delete` followed by a failed `ip link add` | Broken |
-| `wg set peer ... endpoint <host:port>` (resolves the hub's name) | Disconnected, reason `endpoint unresolvable` |
-| version endpoint unreachable; fetch failure; bundle invalid; cache unusable | Disconnected, reason `config unavailable` |
-| bundle valid but no entry for this key | Disconnected, reason `not enrolled` |
-| no handshake, or older than `WG_STALE_SECS` | Disconnected, reason `no handshake` |
+| `wg set peer ... endpoint <host:port>` (resolves the hub's name) | at boot, a refused start unless the switch is on; at runtime, Disconnected, reason `endpoint unresolvable` |
+| version endpoint unreachable; fetch failure; bundle invalid; cache unusable | at boot, a refused start (`config unavailable`) unless the switch is on; at runtime, never a health signal: logged per 5.5, the applied configuration stays |
+| bundle valid but no entry for this key | at boot, a refused start (`not enrolled`) unless the switch is on; at runtime with a configuration applied, the removal shutdown of 5.5 |
+| no handshake, or older than `WG_STALE_SECS` | at boot, a refused start unless the switch is on; at runtime, Disconnected, reason `no handshake` |
 | a startup script exits nonzero | exit 1 before the app is spawned, naming the script and its code |
 
 A single `wg set` invocation that sets the endpoint together with other fields is split so that the
@@ -557,23 +577,26 @@ DNS failure could not be told from a local one.
 | --- | --- | --- |
 | `WG_POLL_SECS` | 30 | the poll interval, as today |
 | `WG_STALE_SECS` | 180 | handshake age past which the tunnel is Disconnected; must be at least 150, since WireGuard renews only every 120 s |
-| `WG_HANDSHAKE_ALERT_SECS` | 60 | at boot only: if not Connected this long after step 1 of 5.2, send `/fail` once with the current reason. Replaces `WG_HANDSHAKE_TIMEOUT_SECS`, which is refused at start with a message naming the new variable and its changed meaning |
-| `WG_DISCONNECTED_LIMIT_SECS` | 1800 | continuous Disconnected time after which shutdown is pending (section 6) |
+| `WG_HANDSHAKE_TIMEOUT_SECS` | 60 | at boot: how long the first handshake may take (5.2 step 4) before the start is refused or, under the switch, before the app starts Disconnected |
+| `WG_DISCONNECTED_LIMIT_SECS` | 1800 | continuous Disconnected time after which shutdown is pending (section 6); no effect under the switch |
 | `WG_HOLD_LIMIT_SECS` | 0 | upper bound on how long the app may hold a pending shutdown; 0 means no bound |
 | `WG_VERSION_POLL_SECS` | 300 | fetched mode: interval between version checks while Connected |
+| `WG_TOLERATE_DISCONNECTED` | unset | `1` turns every boot-time connect failure into a running, Disconnected spoke (5.2 step 5) and switches the give-up off (6.1); anything but unset, empty or `1` is refused at start |
 
-Alerts through the ping, best effort as today: at boot, one `/fail` per the alert timer; at
-runtime, one `/fail` on the Connected-to-Disconnected transition, as today; on give-up, `/fail`
-with `gave up after <n> s: <reason>`; on Broken, `/fail` with the error. Plain pings resume on
-Connected as today.
+Alerts through the ping, best effort as today: at boot, `/fail` with the reason on a refused
+start, or once under the switch; at runtime, one `/fail` on the Connected-to-Disconnected
+transition, as today; on give-up, `/fail` with `gave up after <n> s: <reason>`; on removal,
+`/fail` with `removed from the hub's peer table in <tag>` (5.5); on Broken, `/fail` with the
+error. Plain pings resume on Connected as today.
 
-Exit codes: the app's own code passes through as today; Broken and a failed startup script exit 1;
-give-up exits **75**, chosen as `EX_TEMPFAIL`, meaning a redeploy is the retry.
+Exit codes: the app's own code passes through as today; Broken, a refused start and a failed
+startup script exit 1; give-up and the removal shutdown exit **75**, chosen as `EX_TEMPFAIL`,
+meaning a redeploy is the retry.
 
 ### 5.5 Version polling and in-place re-apply (fetched mode)
 
 While Connected, every `WG_VERSION_POLL_SECS`: query the version endpoint, on the worker thread of
-5.2 step 5; the fetch that may follow runs on the same thread, and the apply below happens inline
+5.2 step 7; the fetch that may follow runs on the same thread, and the apply below happens inline
 at the poll that receives the result. Unreachable or invalid is skipped and is never a health
 signal while the tunnel is Connected; it is logged once when the checks start failing, with the
 error, and once when they succeed again, never per attempt (5.8). A tag equal to the applied bundle's
@@ -593,16 +616,22 @@ so nothing in flight is disturbed, in the table's order, the endpoint last:
 Failures classify per 5.3. On success the new tag and configuration are the applied ones and the
 change is logged field by field, never printing keys beyond their first eight characters.
 
+A fetched bundle that is valid and has no entry for this key while a configuration is applied is
+the hub's instruction, not a connectivity failure, and it is honoured under both settings of the
+switch: the cache is written, `/fail` goes out with `removed from the hub's peer table in <tag>`,
+the same line is logged, then the shutdown of 6.3 without the consent ask: SIGINT to the app, up
+to 30 s, SIGKILL, `wg0` down, exit 75.
+
 ### 5.6 Repairs while Disconnected
 
 Every poll while Disconnected, in this order, stopping at the first that yields Connected on the
 next poll:
 
-1. If no configuration is applied, or the reason is `config unavailable` or `not enrolled`: try to
-   obtain one (4.1 to 4.4) and apply it. In fetched mode with a configuration already applied,
-   also query the version endpoint; a new tag is fetched and applied exactly as in 5.5, because
-   a hub change is a common cause of disconnection. Both run on the worker thread of 5.2 step 5,
-   one attempt in flight; the apply happens inline at the poll that receives the result.
+1. Under the switch, when the boot got no configuration: try to obtain one (4.1 to 4.4) and apply
+   it. In fetched mode with a configuration applied, also query the version endpoint; a new tag
+   is fetched and applied exactly as in 5.5, because a hub change is a common cause of
+   disconnection. Either runs on the worker thread of 5.2 step 7, one attempt in flight; the
+   apply happens inline at the poll that receives the result.
 2. Otherwise alternate: on the first Disconnected poll after a Connected one, re-set the endpoint
    (`wg set wg0 peer <key> endpoint <endpoint>`, which re-resolves the name and leaves the
    interface running); on the next, bring `wg0` down and up with the applied configuration (the
@@ -619,9 +648,10 @@ Unchanged: `devkit-container healthcheck --file heartbeat.txt --file wireguard-h
 with the 180 s threshold and the 90 s start period. `persisted_data/logs`, where both files live,
 is created and chowned by `prepare` whenever the supervisor runs (`supervise` or `wireguard` on),
 implicitly, like the cache folder of 4.4, so the tunnel heartbeat can be written from the first
-poll on a fresh volume. During boot-time Disconnected the tunnel file does not exist yet, which
-the healthcheck reports as missing; the container turns unhealthy after the start period plus the
-retries, which is the intended alert path alongside the `/fail` ping.
+poll on a fresh volume. The tunnel file is first written on the first poll after the app starts,
+seconds into the 90 s start period. Under the switch, a spoke that booted Disconnected has no
+tunnel file, which the healthcheck reports as missing once the start period and the retries have
+passed, alongside the `/fail` ping already sent.
 
 ### 5.8 The binary's log file
 
@@ -642,10 +672,11 @@ deferred (6.4).
 
 ### 6.1 When
 
-Only when the disconnected clock passes `WG_DISCONNECTED_LIMIT_SECS`. Signals from Docker or
-Coolify are forwarded to the app immediately, as today, with no consent step. Consent exists in
-both modes and under `supervise` without `wireguard` the machinery is present but never
-triggered.
+Only when the disconnected clock passes `WG_DISCONNECTED_LIMIT_SECS` and `WG_TOLERATE_DISCONNECTED`
+is off: under the switch there is no give-up, so the spoke repairs until the hub returns (5.4).
+Signals from Docker or Coolify are forwarded to the app immediately, as today, with no consent
+step, and the removal shutdown of 5.5 does not ask. Consent exists in both modes and under
+`supervise` without `wireguard` the machinery is present but never triggered.
 
 ### 6.2 The protocol
 
@@ -658,7 +689,7 @@ triggered.
 - The supervisor treats each of these as `ok`: connection refused, no socket file, any error,
   end of stream without a line, any line other than `hold`, and no reply within 60 s. Only a
   literal `hold` postpones.
-- The ask runs on the worker thread of 5.2 step 5; the loop reads the reply at the first poll
+- The ask runs on the worker thread of 5.2 step 7; the loop reads the reply at the first poll
   after it arrives or times out.
 
 ### 6.3 The supervisor's loop while shutdown is pending
@@ -718,7 +749,7 @@ Generic features of `run`, added for the hub and kept minimal. Depends on sectio
 - Both keys are read only by the binary and are available to template gates through `keys()`.
   Neither is added to the pyproject template (section 2, rendering rule).
 - Order of `run`, complete: root check; `pyproject.toml`; resolve run script and startup scripts;
-  mount check; configure the ping (5.4); tunnel (5.2 steps 1 to 3, spoke modes only); `prepare`,
+  mount check; configure the ping (5.4); tunnel (5.2 steps 1 to 5, spoke modes only); `prepare`,
   including the implicit folders (4.4, 5.7); the boot cache write (4.4); startup scripts; scrub;
   drop; spawn or exec the app.
 
@@ -736,22 +767,22 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_HUB_TOKEN` | spoke | by the rendered compose file; the binary accepts its absence (4.2) | | `${WG_HUB_TOKEN:?}` | yes |
 | `WG_POLL_SECS` | spoke | no | 30 | no | no |
 | `WG_STALE_SECS` | spoke | no | 180 | no | no |
-| `WG_HANDSHAKE_ALERT_SECS` | spoke | no | 60 | no | no |
+| `WG_HANDSHAKE_TIMEOUT_SECS` | spoke | no | 60 | no | no |
 | `WG_DISCONNECTED_LIMIT_SECS` | spoke | no | 1800 | no | no |
 | `WG_HOLD_LIMIT_SECS` | spoke | no | 0 | no | no |
 | `WG_VERSION_POLL_SECS` | spoke | no | 300 | no | no |
 | `WG_ADDRESS`, `WG_PEER_PUBLIC_KEY`, `WG_PEER_ENDPOINT`, `WG_PEER_ALLOWED_IPS` | spoke, environment mode | in that mode | | no | no |
 | `WG_PEER_PRESHARED_KEY` | spoke, environment mode | no | | no | yes |
 | `WG_PERSISTENT_KEEPALIVE` | spoke, environment mode | no | 25 | no | no |
-| `WG_HANDSHAKE_TIMEOUT_SECS` | spoke | refused if set | | no | |
+| `WG_TOLERATE_DISCONNECTED` | spoke | no | unset | no | no |
 | `WG_HUB_PRIVATE_KEY` | hub | yes | | by hand in the hub's compose file (3.6) | via `scrub_env` |
 | `DEVKIT_CONSENT_SOCKET` | set on the app | | | set by `run` under `supervise` | |
 | `DEVKIT_SUPERVISED_PING` | set on the app | | | unchanged | |
 | `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL` | both | | | unchanged | |
 
 Format rules: `WG_HUB_REPO` is `owner/repo`; `WG_HUB_URL` per 4.1; every `*_SECS` an integer at
-least 1 except `WG_HOLD_LIMIT_SECS`, which accepts 0. Empty is unset, as today. A failure names the
-variable, never its value.
+least 1 except `WG_HOLD_LIMIT_SECS`, which accepts 0; `WG_TOLERATE_DISCONNECTED` is unset, empty
+or `1`. Empty is unset, as today. A failure names the variable, never its value.
 
 No test-only variable exists: the smoke test fetches from real GitHub (13), and the unit test of
 the fetch passes its listener's address to the fetch code directly (4.2).
@@ -857,8 +888,8 @@ every image), so the release order of 14 is what keeps the two in step.
 - Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL=https://tunnels.sweetfiretobacco.com`,
   `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The six old peer values of 5.1, if
   present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
-- Enrol: take the public key from the container's start log, add the row to the hub's
-  `peers.toml` (3.8), release the hub.
+- Enrol: the first start is refused with `not enrolled` and logs the public key; add the row to
+  the hub's `peers.toml` (3.8), release the hub, redeploy the spoke.
 - Neither adopts consent in this change: the app-side helper is deferred (6.4), and
   non-participation reads as consent.
 - `tunnel-probe` is a spoke whose app, in this document, only heartbeats. Its database query,
@@ -901,9 +932,9 @@ Reserved for the owner and answered in the grounding pass of 2026-09-14:
   access to the contents of `wireguard-hub` and nothing else, one-year expiry, rotated by the
   owner when it expires. An expired token surfaces as `config unavailable` in the spoke's log
   and, if the hub changes meanwhile, as the tunnel going Disconnected.
-- **The smoke-test fixture:** repository `AetherBreaker/wireguard-hub-smoke`, private, holding two
-  releases whose `peers.toml` enrol the test spoke's public key at two addresses under the
-  fixture hub's public key (13). Its token is a second fine-grained token of the same shape,
+- **The smoke-test fixture:** repository `AetherBreaker/wireguard-hub-smoke`, private, holding
+  three releases: two whose `peers.toml` enrol the test spoke's public key at two addresses under
+  the fixture hub's public key, and a third whose `peers.toml` has no entry for it (13). Its token is a second fine-grained token of the same shape,
   scoped to that repository only. The two key pairs, the fixture hub's and the test spoke's, are
   constants in the smoke test source: WireGuard keys match no provider pattern GitHub's secret
   scanning knows, and each constant's line carries the `gitleaks:allow`, `trufflehog:ignore` and
@@ -970,9 +1001,11 @@ two GitHub hosts being the fetch code's ordinary inputs: the listing, the 302, t
 target, and the assertion that the `Authorization` header reaches only the API address and never
 the redirect target; a missing asset; a body over 1 MiB; a `hub_version` that does not match the
 tag. The configuration diff to commands of 5.5, one case per row, the endpoint last. The state
-machine with an injected clock: Broken classification per row of 5.3, the boot alert at 60 s, the
-runtime `/fail` on transition, the 30-minute give-up, the clock reset on Connected, the
-alternating repair of 5.6 and its two restart points, hold postponing, the hold limit. The consent
+machine with an injected clock: Broken classification per row of 5.3, the refused start for each
+boot outcome and the same outcomes tolerated under the switch, the runtime `/fail` on transition,
+the 30-minute give-up and its absence under the switch, the removal shutdown, the clock reset on
+Connected, the alternating repair of 5.6 and its two restart points, hold postponing, the hold
+limit. The consent
 client against a fake socket: `ok`, `hold`, garbage, EOF, timeout, absent socket, refused
 connection. Startup script resolution, order, environment, failure. `scrub_env` and the built-in
 scrubs on both paths. The implicit folders of 4.4 and 5.7 created and chowned, and not part of
@@ -985,20 +1018,25 @@ the window markers in the template.
 **This repo, smoke (Linux).** A hub container built from the test image running a minimal hub (the
 commands of 3.4 in shell are acceptable here) and serving `/version` from a small HTTP listener on
 the test network, reached through `WG_HUB_URL` over plain `http`. The bundle comes from real
-GitHub, from the fixture repository of section 11: two releases whose `peers.toml` enrol the test
-spoke's public key at two addresses under the fixture hub's public key, fetched with the fixture
-token. Both key pairs are constants in the test source (section 11). The test reads
-`DEVKIT_SMOKE_WG_HUB_TOKEN` from its environment and refuses to run, naming it, when it is missing
-(it does not skip); CI provides it as a secret. A spoke built from the template in fetched mode
-with the test spoke's key, and a second spoke with a freshly generated key. Asserts: boot fetch, Connected, both heartbeats fresh; the cache file exists at its path with
-its mode and owner; the second spoke is Disconnected with `not enrolled` and its app is running;
-the hub removes the peer, the spoke goes Disconnected, the healthcheck names the tunnel file; with
-the limit set to seconds, the spoke asks, a participating test app (which speaks the protocol of
-6.2 itself, in a few lines of standard-library Python) answers `hold`, the spoke is not signalled,
-the app answers `ok`, the spoke sends SIGINT and exits 75; the hub's `/version` moves to the second
-tag and the test hub's allowed IPs to the second address, the spoke re-applies in place and the new
-address is on `wg0` without the interface having gone down. The existing off-mode, supervise-mode
-and environment-mode smoke tests stay green. The helper that applies the Dockerfile template's
+GitHub, from the fixture repository of section 11: three releases, two whose `peers.toml` enrol
+the test spoke's public key at two addresses under the fixture hub's public key and one without
+the entry, fetched with the fixture token. Both key pairs are constants in the test source
+(section 11). The test reads `DEVKIT_SMOKE_WG_HUB_TOKEN` from its environment and refuses to run,
+naming it, when it is missing (it does not skip); CI provides it as a secret. A spoke built from
+the template in fetched mode with the test spoke's key. Asserts: boot fetch, Connected, both
+heartbeats fresh; the cache file exists at its path with its mode and owner; a second spoke with
+a freshly generated key is refused, exiting 1 with `not enrolled` and its key in the log, and the
+same spoke under `WG_TOLERATE_DISCONNECTED=1` runs Disconnected with its app started; a spoke
+pointed at an unreachable `WG_HUB_URL` on an empty volume is refused with `config unavailable`;
+the hub's `/version` moves to the second tag and the test hub's allowed IPs to the second
+address, the spoke re-applies in place and the new address is on `wg0` without the interface
+having gone down; the hub removes the peer, the spoke goes Disconnected, the healthcheck names
+the tunnel file; with the limit set to seconds, the spoke asks, a participating test app (which
+speaks the protocol of 6.2 itself, in a few lines of standard-library Python) answers `hold`, the
+spoke is not signalled, the app answers `ok`, the spoke sends SIGINT and exits 75; a fresh spoke
+container with the test key boots against the second tag and, when `/version` moves to the third
+tag, logs the removal, sends `/fail`, asks nothing, and exits 75. The existing off-mode,
+supervise-mode and environment-mode smoke tests stay green. The helper that applies the Dockerfile template's
 gate locally leaves the window markers in place, as the rendered file keeps them.
 
 **`aeth-devkit`.** The kept-jobs key of 3.7: a `release.yml` holding a named job survives a
@@ -1059,8 +1097,9 @@ First deploy, in this order, each a hard stop if it fails:
    the published UDP port passed through unchanged; `GET /version` over the public name answers
    the hub's tag; the hub's heartbeat is fresh.
 4. The hub and the office PC handshake with each other before any app is involved.
-5. ScheduledReportAggregator's container fetches the bundle, handshakes with the hub at the public
-   endpoint (the hairpin check), and both of its heartbeat files are fresh; `docker inspect` shows
+5. ScheduledReportAggregator's first start is refused with `not enrolled` and its key in the log;
+   enrolled and redeployed, it fetches the bundle, handshakes with the hub at the public endpoint
+   (the hairpin check), and both of its heartbeat files are fresh; `docker inspect` shows
    `cap_add` passed through.
 6. A hub release that changes nothing for the spoke is picked up within the version poll interval
    with no re-apply logged; one that changes its keepalive is applied in place without the
