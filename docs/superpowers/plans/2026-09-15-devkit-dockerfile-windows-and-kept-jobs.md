@@ -1422,7 +1422,7 @@ git push
 
 **Files:** the three plan copies.
 
-- [ ] **Step 1: Rebase `feat/review-everything-but-docker` onto the new `main` (spec 14 ruling)**
+- [x] **Step 1: Rebase `feat/review-everything-but-docker` onto the new `main` (spec 14 ruling)**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/aeth_devkit"
@@ -1444,8 +1444,6 @@ Ask the owner before the force push (it rewrites the remote branch), then:
 git push --force-with-lease
 git checkout main
 ```
-
-Not ticked yet: the rebase, the checks and the log are done; the force push waits for the owner's word (2026-09-15).
 
 - [x] **Step 2: Sync the fully ticked plan to every copy**
 
