@@ -1115,6 +1115,15 @@ create and use it so nothing changes when the repository goes private again), an
 decision of section 11 stays deferred, gating `tunnel-probe`'s query and the per-flow rules but
 not the tunnels. The smoke-test fixture repository and its secret on devkit-container exist.
 
+Status, 2026-09-15, later: the `tunnel-probe` part of step 4 is released and enrolled ahead of
+its first deploy: tunnel-probe 1.0.0 (the placeholder app of 10.1, compose pinned), its key pair
+generated at enrolment (the private key in an ignored file beside the checkout, never
+committed), its row in wireguard-hub 1.1.0, whose bundle and `tunnel-probe.conf` asset carry it,
+and the hub's compose pinned to v1.1.0. The repository is public like the hub's, for the same
+reason (section 2). Left in step 4: the hub redeployed at v1.1.0 so its interface knows the peer,
+tunnel-probe deployed in Coolify with the four variables of 10.1 (the production token of section
+11 first), then ScheduledReportAggregator and the office PC.
+
 ## 15. TODO entries to record in this repo at implementation
 
 - A per-project `docker/wireguard/wg0.conf` as a third configuration source, for projects without
