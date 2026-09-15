@@ -11,6 +11,7 @@ use crate::bundle::Effective;
 pub const SECRET_VARS: [&str; 3] = ["WG_PRIVATE_KEY", "WG_PEER_PRESHARED_KEY", "WG_HUB_TOKEN"];
 
 /// The six variables of environment mode; any of them beside `WG_HUB_URL` is refused (5.1).
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 const ENV_MODE_VARS: [&str; 6] = [
   "WG_ADDRESS",
   "WG_PEER_PUBLIC_KEY",
@@ -21,6 +22,7 @@ const ENV_MODE_VARS: [&str; 6] = [
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 pub enum Mode {
   /// The whole peer configuration from `WG_*` variables (5.1), kept for projects that have not
   /// migrated.
@@ -37,6 +39,7 @@ pub enum Mode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 pub struct Settings {
   pub private_key: String,
   pub mode: Mode,
@@ -51,6 +54,7 @@ pub struct Settings {
   pub version_poll_secs: u64,
 }
 
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 impl Settings {
   /// The contract of spec 5.1, 5.4 and 8. `get` is the environment, injected for tests. Empty
   /// is unset. A failure names the variable and never echoes a value.
@@ -135,6 +139,7 @@ impl Settings {
 
 /// `http://host[:port]` or `https://host[:port]`, one trailing slash stripped, nothing else
 /// after the host (spec 4.1).
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 pub fn validate_hub_url(s: &str) -> Result<String> {
   let bad = |why: &str| anyhow!("WG_HUB_URL must be http://host[:port] or https://host[:port] with no path ({why})");
   let (scheme, rest) = ["https://", "http://"]
@@ -152,6 +157,7 @@ pub fn validate_hub_url(s: &str) -> Result<String> {
 }
 
 /// `owner/repo`, both parts non-empty, characters `[A-Za-z0-9._-]` (spec 8).
+#[allow(dead_code)] // until run and the supervisor use it (task 11)
 pub fn validate_repo(s: &str) -> Result<String> {
   let ok = s.split('/').count() == 2
     && s

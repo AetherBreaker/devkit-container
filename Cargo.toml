@@ -21,6 +21,7 @@
   nix         = { version = "0.31.3", features = ["user", "signal", "process"] }
   signal-hook = "0.4"
   ureq        = { version = "3.4", default-features = false, features = ["rustls"] }
+  serde_json  = "1.0.151"
 
 [dev-dependencies]
   jiff       = "0.2"
