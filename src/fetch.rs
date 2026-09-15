@@ -101,6 +101,13 @@ impl Fetcher {
       .and_then(|u| u.as_str())
       .ok_or_else(|| anyhow!("release {tag} has no peers.toml asset"))?
       .to_string();
+    // The token goes to the API host only (4.2), so the listing's asset URL must be on it.
+    if !asset_url.starts_with(&format!("{}/", self.hosts.api)) {
+      bail!(
+        "release {tag}: the peers.toml asset URL is not on the API host: {:?}",
+        truncate(&asset_url, 64)
+      );
+    }
     // Redirects off: the 302 comes back as a response, and its Location is fetched without the
     // token (the client would strip it on a followed redirect too; this keeps it testable).
     let resp = self
