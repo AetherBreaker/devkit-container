@@ -18,7 +18,7 @@
 # `ureq` only serves the supervisor, which is Unix-only; listing it here keeps `ring`'s C sources
 # out of the Windows build.
 [target.'cfg(unix)'.dependencies]
-  nix         = { version = "0.31.3", features = ["user", "signal", "process"] }
+  nix         = { version = "0.31.3", features = ["user", "signal", "process", "poll"] }
   signal-hook = "0.4"
   ureq        = { version = "3.4", default-features = false, features = ["rustls"] }
   serde_json  = "1.0.151"

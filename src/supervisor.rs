@@ -45,6 +45,9 @@ pub use unix::run;
 
 #[cfg(unix)]
 mod unix {
+  use std::io::Read as _;
+  use std::os::fd::AsFd as _;
+  use std::os::unix::net::UnixStream;
   use std::os::unix::process::CommandExt as _;
   use std::process::Command;
   use std::sync::Arc;
@@ -68,6 +71,57 @@ mod unix {
     setgid(Gid::from_raw(NONROOT)).context("setgid")?;
     setuid(Uid::from_raw(NONROOT)).context("setuid")?;
     Ok(())
+  }
+
+  /// The loop's wake-up (spec 5.2 step 7): a socket pair the signal handlers write a byte to,
+  /// so a signal or the child's exit (SIGCHLD) ends the wait at once instead of at the next
+  /// 250 ms tick. The flags and `waitpid` still carry the facts; this only ends the sleep.
+  pub struct Waker {
+    rx: UnixStream,
+    /// The handlers hold their own clones; this end serves the test's `poke`.
+    #[cfg(test)]
+    tx: UnixStream,
+  }
+
+  impl Waker {
+    pub fn new() -> Result<Waker> {
+      let (rx, tx) = UnixStream::pair().context("creating the wake-up socket pair")?;
+      rx.set_nonblocking(true).context("wake-up socket")?;
+      tx.set_nonblocking(true).context("wake-up socket")?;
+      for sig in [
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGHUP,
+        signal_hook::consts::SIGCHLD,
+      ] {
+        signal_hook::low_level::pipe::register(sig, tx.try_clone().context("wake-up socket")?)
+          .context("installing the wake-up handler")?;
+      }
+      #[cfg(not(test))]
+      drop(tx);
+      Ok(Waker {
+        rx,
+        #[cfg(test)]
+        tx,
+      })
+    }
+
+    /// Wait until a byte arrives or `max` passes, then drain every byte that arrived.
+    pub fn wait(&self, max: Duration) {
+      use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+      let mut fds = [PollFd::new(self.rx.as_fd(), PollFlags::POLLIN)];
+      let timeout = PollTimeout::try_from(max).unwrap_or(PollTimeout::MAX);
+      let _ = poll(&mut fds, timeout);
+      let mut buf = [0u8; 64];
+      while (&self.rx).read(&mut buf).is_ok_and(|n| n > 0) {}
+    }
+
+    /// What a signal handler does, for the test.
+    #[cfg(test)]
+    pub fn poke(&self) {
+      use std::io::Write as _;
+      let _ = (&self.tx).write_all(&[1]);
+    }
   }
 
   /// Supervise `plan.exe` until it exits; returns the code to exit with (signal death as
@@ -94,6 +148,7 @@ mod unix {
     ] {
       signal_hook::flag::register(sig, Arc::clone(flag)).context("installing signal handler")?;
     }
+    let waker = Waker::new()?;
 
     let mut cmd = Command::new(&plan.exe);
     for var in SECRET_VARS {
@@ -196,7 +251,8 @@ mod unix {
           None => {}
         }
       }
-      std::thread::sleep(Duration::from_millis(250));
+      let until_poll = next_poll.saturating_duration_since(Instant::now());
+      waker.wait(until_poll.min(Duration::from_millis(250)));
     }
 
     if let Some(t) = &tunnel {
@@ -229,5 +285,26 @@ mod tests {
     assert_eq!(p.decide(false), Some(Kind::Fail));
     assert_eq!(p.decide(false), None, "one /fail per outage");
     assert_eq!(p.decide(true), Some(Kind::Plain), "no second /start");
+  }
+  #[cfg(unix)]
+  #[test]
+  fn the_waker_returns_at_once_on_a_write_and_after_the_timeout_otherwise() {
+    use std::time::{Duration, Instant};
+    let waker = super::unix::Waker::new().unwrap();
+    // Other tests spawn processes, and their SIGCHLD wakes every waker in this process, so a
+    // full timeout is asserted as "one of a few waits lasted it", not "the first did".
+    let full_timeout = |waker: &super::unix::Waker| {
+      (0..20).any(|_| {
+        let start = Instant::now();
+        waker.wait(Duration::from_millis(200));
+        start.elapsed() >= Duration::from_millis(150)
+      })
+    };
+    assert!(full_timeout(&waker), "a wait without a wake-up lasts the timeout");
+    waker.poke();
+    let start = Instant::now();
+    waker.wait(Duration::from_secs(5));
+    assert!(start.elapsed() < Duration::from_secs(1), "woke at once");
+    assert!(full_timeout(&waker), "the poke was drained");
   }
 }
