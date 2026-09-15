@@ -518,13 +518,16 @@ send `/fail`. Then, all before the app exists:
    [tool.docker].wireguard off or enrol the key, then redeploy` (the hub's bundle is valid and
    lacks this key). This is the one network wait done inline: it is bounded by the request
    timeouts of 4.1 and 4.2, at most four requests of 10 s each.
-3. Apply it, in this order: `wg set wg0 peer <hub key> allowed-ips <cidrs>
-   persistent-keepalive <n>`; `ip address add <address> dev wg0`; `ip link set up dev wg0`; one
-   `ip route replace <cidr> dev wg0` per allowed IP; last, `wg set wg0 peer <hub key> endpoint
-   <endpoint>`. The endpoint is the last command of every apply (here, in 5.5 and in the re-up of
-   5.6) because it is the one command that resolves a name: a DNS failure then leaves a complete
-   interface lacking only the endpoint, and the repair is exactly a re-set. Classification per
-   5.3: a local failure is Broken; the endpoint failing is `endpoint unresolvable`.
+3. Apply it, in this order: `wg set wg0 peer <hub key> allowed-ips <cidrs>`; `ip address add
+   <address> dev wg0`; `ip link set up dev wg0`; one `ip route replace <cidr> dev wg0` per
+   allowed IP; last, `wg set wg0 peer <hub key> endpoint <endpoint> persistent-keepalive <n>`.
+   The endpoint is the last command of every apply (here, in 5.5 and in the re-up of 5.6)
+   because it is the one command that resolves a name: a DNS failure then leaves a complete
+   interface lacking only the endpoint, and the repair is exactly a re-set. The keepalive rides
+   with the endpoint because WireGuard sends its first handshake when the keepalive is set;
+   set before the endpoint exists, that attempt is lost and only the 5 s retry can succeed.
+   Classification per 5.3: a local failure is Broken; the endpoint failing is `endpoint
+   unresolvable`.
 4. Wait for the first handshake, polling `wg show wg0 latest-handshakes` every 500 ms, for up to
    `WG_HANDSHAKE_TIMEOUT_SECS` (5.4). None is `no wireguard handshake with <endpoint> within <n> s`.
 5. **The gate.** By default a boot that has not reached Connected here is refused: `wg0` comes
@@ -610,11 +613,11 @@ so nothing in flight is disturbed, in the table's order, the endpoint last:
 
 | Changed | Commands |
 | --- | --- |
-| hub public key | `wg set wg0 peer <old key> remove`; `wg set wg0 peer <new key> allowed-ips <cidrs> persistent-keepalive <n>`; then the endpoint row |
+| hub public key | `wg set wg0 peer <old key> remove`; `wg set wg0 peer <new key> allowed-ips <cidrs>`; then the endpoint row |
 | allowed IPs, keepalive (key unchanged) | `wg set wg0 peer <key> ...` with the changed fields; `allowed-ips` is given as the full new set |
 | address | `ip address replace <new> dev wg0`; `ip address delete <old> dev wg0` |
 | allowed IPs (routes) | `ip route replace <cidr> dev wg0` for each added CIDR; `ip route delete <cidr> dev wg0` for each removed |
-| endpoint, or a new hub key | `wg set wg0 peer <key> endpoint <endpoint>`, after every other row |
+| endpoint, or a new hub key | `wg set wg0 peer <key> endpoint <endpoint> persistent-keepalive <n>`, after every other row |
 
 Failures classify per 5.3. On success the new tag and configuration are the applied ones and the
 change is logged field by field, never printing keys beyond their first eight characters.
@@ -636,8 +639,8 @@ Every poll while Disconnected, both steps in the same poll, neither waiting for 
    disconnection. Either runs on the worker thread of 5.2 step 7, one attempt in flight, started
    only when none is; the apply happens inline at the poll that receives the result.
 2. With a configuration applied, alternate: on the first Disconnected poll after a Connected one,
-   re-set the endpoint (`wg set wg0 peer <key> endpoint <endpoint>`, which re-resolves the name
-   and leaves the interface running); on the next, bring `wg0` down and up with the applied
+   re-set the endpoint (`wg set wg0 peer <key> endpoint <endpoint> persistent-keepalive <n>`,
+   which re-resolves the name and leaves the interface running); on the next, bring `wg0` down and up with the applied
    configuration (the apply of 5.2 step 3, the endpoint last); then the endpoint again, then down
    and up, alternating. Every re-up is logged. The sequence starts over at the endpoint re-set
    after every Connected poll and after a configuration is applied by step 1.

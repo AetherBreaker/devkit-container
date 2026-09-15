@@ -188,21 +188,14 @@ fn cmd(program: &'static str, args: &[&str], kind: CmdKind) -> Cmd {
   }
 }
 
-/// The apply of 5.2 step 3: peer, address, link up, routes, and the endpoint last.
+/// The apply of 5.2 step 3: peer, address, link up, routes, and the endpoint last. The keepalive
+/// goes with the endpoint: WireGuard fires its first handshake when the keepalive is set, so set
+/// before the endpoint exists that attempt is lost and only the 5 s retry can succeed (measured).
 pub fn apply_commands(eff: &Effective) -> Vec<Cmd> {
   let mut v = vec![
     cmd(
       "wg",
-      &[
-        "set",
-        IFACE,
-        "peer",
-        &eff.hub_public_key,
-        "allowed-ips",
-        &eff.allowed_ips.join(","),
-        "persistent-keepalive",
-        &eff.keepalive.to_string(),
-      ],
+      &["set", IFACE, "peer", &eff.hub_public_key, "allowed-ips", &eff.allowed_ips.join(",")],
       CmdKind::Local,
     ),
     cmd("ip", &["address", "add", &eff.address, "dev", IFACE], CmdKind::Local),
@@ -219,7 +212,16 @@ pub fn apply_commands(eff: &Effective) -> Vec<Cmd> {
 pub fn endpoint_command(eff: &Effective) -> Cmd {
   cmd(
     "wg",
-    &["set", IFACE, "peer", &eff.hub_public_key, "endpoint", &eff.endpoint],
+    &[
+      "set",
+      IFACE,
+      "peer",
+      &eff.hub_public_key,
+      "endpoint",
+      &eff.endpoint,
+      "persistent-keepalive",
+      &eff.keepalive.to_string(),
+    ],
     CmdKind::Endpoint,
   )
 }
@@ -237,16 +239,7 @@ pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> 
     v.push(cmd("wg", &["set", IFACE, "peer", &old.hub_public_key, "remove"], CmdKind::Local));
     v.push(cmd(
       "wg",
-      &[
-        "set",
-        IFACE,
-        "peer",
-        &new.hub_public_key,
-        "allowed-ips",
-        &new.allowed_ips.join(","),
-        "persistent-keepalive",
-        &new.keepalive.to_string(),
-      ],
+      &["set", IFACE, "peer", &new.hub_public_key, "allowed-ips", &new.allowed_ips.join(",")],
       CmdKind::Local,
     ));
   } else if old_ips != new_ips || old.keepalive != new.keepalive {
@@ -626,11 +619,11 @@ mod tests {
     assert_eq!(
       lines(&cmds),
       [
-        "wg set wg0 peer HUBKEY allowed-ips 10.8.0.0/24 persistent-keepalive 25",
+        "wg set wg0 peer HUBKEY allowed-ips 10.8.0.0/24",
         "ip address add 10.8.0.20/32 dev wg0",
         "ip link set up dev wg0",
         "ip route replace 10.8.0.0/24 dev wg0",
-        "wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820",
+        "wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820 persistent-keepalive 25",
       ]
     );
     assert!(cmds[..4].iter().all(|c| c.kind == CmdKind::Local));
@@ -647,8 +640,8 @@ mod tests {
       lines(&reapply_commands(&old, &key, true)),
       [
         "wg set wg0 peer HUBKEY remove",
-        "wg set wg0 peer NEWKEY allowed-ips 10.8.0.0/24 persistent-keepalive 25",
-        "wg set wg0 peer NEWKEY endpoint tunnels.example.com:51820",
+        "wg set wg0 peer NEWKEY allowed-ips 10.8.0.0/24",
+        "wg set wg0 peer NEWKEY endpoint tunnels.example.com:51820 persistent-keepalive 25",
       ]
     );
     let mut ips = old.clone();
@@ -685,11 +678,14 @@ mod tests {
     let mut endpoint = old.clone();
     endpoint.endpoint = "other.example.com:51820".into();
     let cmds = reapply_commands(&old, &endpoint, true);
-    assert_eq!(lines(&cmds), ["wg set wg0 peer HUBKEY endpoint other.example.com:51820"]);
+    assert_eq!(
+      lines(&cmds),
+      ["wg set wg0 peer HUBKEY endpoint other.example.com:51820 persistent-keepalive 25"]
+    );
     assert_eq!(cmds[0].kind, CmdKind::Endpoint);
     assert_eq!(
       lines(&reapply_commands(&old, &old, false)),
-      ["wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820"],
+      ["wg set wg0 peer HUBKEY endpoint tunnels.example.com:51820 persistent-keepalive 25"],
       "an unresolved endpoint is retried even when unchanged"
     );
     let mut everything = key.clone();
@@ -701,12 +697,12 @@ mod tests {
       lines(&reapply_commands(&old, &everything, true)),
       [
         "wg set wg0 peer HUBKEY remove",
-        "wg set wg0 peer NEWKEY allowed-ips 10.9.0.0/24 persistent-keepalive 15",
+        "wg set wg0 peer NEWKEY allowed-ips 10.9.0.0/24",
         "ip address replace 10.8.0.21/32 dev wg0",
         "ip address delete 10.8.0.20/32 dev wg0",
         "ip route replace 10.9.0.0/24 dev wg0",
         "ip route delete 10.8.0.0/24 dev wg0",
-        "wg set wg0 peer NEWKEY endpoint other.example.com:51820",
+        "wg set wg0 peer NEWKEY endpoint other.example.com:51820 persistent-keepalive 15",
       ]
     );
   }
