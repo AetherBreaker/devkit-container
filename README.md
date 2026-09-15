@@ -139,7 +139,8 @@ Read by `run`; empty is unset; a failure names the variable, never its value.
 | `DEVKIT_CONSENT_SOCKET` | set on the app under `supervise`: the Unix socket a participating app listens on to answer `may-shutdown` with `ok` or `hold` | set by `run` |
 
 `WG_HUB_URL` together with any environment-mode variable is refused, naming it. Every `*_SECS`
-is an integer at least 1 except `WG_HOLD_LIMIT_SECS`, which accepts 0.
+is an integer at least 1 and at most 31536000 (a year) except `WG_HOLD_LIMIT_SECS`, which
+accepts 0.
 
 ## Heartbeat files
 

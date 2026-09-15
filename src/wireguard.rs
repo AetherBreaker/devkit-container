@@ -65,6 +65,9 @@ impl Settings {
       if n < min {
         bail!("{k} must be at least {min}");
       }
+      if n > MAX_SECS {
+        bail!("{k} must be at most {MAX_SECS} (a year)");
+      }
       Ok(n)
     };
     let private_key = required("WG_PRIVATE_KEY")?;
@@ -162,6 +165,10 @@ pub fn validate_repo(s: &str) -> Result<String> {
   }
   Ok(s.to_string())
 }
+
+/// The ceiling of every timer: `Instant + Duration` panics near `u64::MAX` seconds, and a
+/// value past a year is a typo.
+pub const MAX_SECS: u64 = 31_536_000;
 
 pub const IFACE: &str = "wg0";
 
@@ -555,6 +562,8 @@ mod tests {
       ("WG_STALE_SECS", "149", "at least 150"),
       ("WG_STALE_SECS", "x", "whole number"),
       ("WG_POLL_SECS", "0", "at least 1"),
+      ("WG_POLL_SECS", "31536001", "at most 31536000"),
+      ("WG_VERSION_POLL_SECS", "99999999999999999999", "whole number"),
       ("WG_HANDSHAKE_TIMEOUT_SECS", "0", "at least 1"),
       ("WG_DISCONNECTED_LIMIT_SECS", "0", "at least 1"),
       ("WG_VERSION_POLL_SECS", "0", "at least 1"),
