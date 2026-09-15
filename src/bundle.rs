@@ -287,6 +287,49 @@ fn allowed_ips(t: &dyn TableLike, at: &str) -> Result<Option<Vec<String>>> {
   Ok(Some(out))
 }
 
+/// What the spoke applies (spec 4.3): its entry's fields with the hub's defaults filled in.
+#[derive(Debug, Clone, Eq)]
+pub struct Effective {
+  pub address: String,
+  pub hub_public_key: String,
+  pub endpoint: String,
+  pub allowed_ips: Vec<String>,
+  pub keepalive: u32,
+}
+
+impl PartialEq for Effective {
+  /// Allowed IPs compare as sets: the order the hub wrote them in carries no meaning.
+  fn eq(&self, other: &Self) -> bool {
+    self.address == other.address
+      && self.hub_public_key == other.hub_public_key
+      && self.endpoint == other.endpoint
+      && self.keepalive == other.keepalive
+      && self.allowed_ips.iter().collect::<BTreeSet<_>>() == other.allowed_ips.iter().collect::<BTreeSet<_>>()
+  }
+}
+
+/// The `[[peers]]` row whose key is `public_key`, as the effective configuration; `None` is "not
+/// enrolled". The hub's own key never matches: it is not a peer of itself.
+pub fn select(bundle: &Bundle, public_key: &str) -> Option<Effective> {
+  let peer = bundle.peers.iter().find(|p| p.public_key == public_key)?;
+  Some(Effective {
+    address: peer.address.clone(),
+    hub_public_key: bundle.hub.public_key.clone(),
+    endpoint: peer.endpoint.clone().unwrap_or_else(|| bundle.hub.endpoint.clone()),
+    allowed_ips: peer.allowed_ips.clone().unwrap_or_else(|| bundle.hub.allowed_ips.clone()),
+    keepalive: peer.persistent_keepalive.unwrap_or(bundle.hub.persistent_keepalive),
+  })
+}
+
+/// A fetched bundle must carry the tag it was fetched at (spec 4.2).
+pub fn require_version(bundle: &Bundle, tag: &str) -> Result<()> {
+  match bundle.hub_version.as_deref() {
+    Some(v) if v == tag => Ok(()),
+    Some(v) => bail!("the bundle is stamped hub_version {v} but was fetched at {tag}"),
+    None => bail!("the bundle has no hub_version; the release did not stamp it"),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -439,5 +482,55 @@ persistent_keepalive = 15
   #[test]
   fn garbage_is_named_as_toml() {
     assert!(parse("not = [toml").unwrap_err().to_string().contains("TOML"));
+  }
+  #[test]
+  fn the_entry_is_picked_by_key_and_overrides_win() {
+    let b = parse(&good()).unwrap();
+    let pc = select(&b, &key('B')).unwrap();
+    assert_eq!(pc.address, "10.8.0.10/32");
+    assert_eq!(pc.hub_public_key, key('A'));
+    assert_eq!(pc.endpoint, "tunnels.example.com:51820");
+    assert_eq!(pc.allowed_ips, ["10.8.0.0/24"]);
+    assert_eq!(pc.keepalive, 25);
+    let sra = select(&b, &key('C')).unwrap();
+    assert_eq!(sra.endpoint, "wireguard-hub:51820");
+    assert_eq!(sra.allowed_ips, ["10.8.0.10/32"]);
+    assert_eq!(sra.keepalive, 15);
+    assert_eq!(select(&b, &key('Z')), None, "not enrolled");
+    assert_eq!(select(&b, &key('A')), None, "the hub is not a peer");
+  }
+
+  #[test]
+  fn effective_configurations_compare_allowed_ips_as_sets() {
+    let a = Effective {
+      address: "10.8.0.20/32".into(),
+      hub_public_key: key('A'),
+      endpoint: "h:1".into(),
+      allowed_ips: vec!["10.8.0.0/24".into(), "10.9.0.0/24".into()],
+      keepalive: 25,
+    };
+    let mut b = a.clone();
+    b.allowed_ips.reverse();
+    assert_eq!(a, b);
+    b.allowed_ips.push("10.10.0.0/24".into());
+    assert_ne!(a, b);
+    let mut c = a.clone();
+    c.keepalive = 26;
+    assert_ne!(a, c);
+  }
+
+  #[test]
+  fn the_stamped_version_must_equal_the_requested_tag() {
+    let b = parse(&format!("hub_version = \"v0.3.1\"\n{}", good())).unwrap();
+    assert!(require_version(&b, "v0.3.1").is_ok());
+    let err = require_version(&b, "v0.3.2").unwrap_err().to_string();
+    assert!(err.contains("v0.3.1") && err.contains("v0.3.2"), "{err}");
+    let unstamped = parse(&good()).unwrap();
+    assert!(
+      require_version(&unstamped, "v0.3.1")
+        .unwrap_err()
+        .to_string()
+        .contains("hub_version")
+    );
   }
 }
