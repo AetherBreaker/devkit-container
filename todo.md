@@ -18,3 +18,10 @@
   options, both spec decisions: make the reply window and the stop grace configurable so the
   tests can set them to their floors, and run the env and fetched tests in parallel on the runner
   (they use separate networks and volumes).
+- The Dockerfile template clones the project from GitHub inside the image build, so a private
+  repository cannot be built: the first one, `wireguard-hub`, was made public to deploy (2026-09-15).
+  Decide the proper fix: build from Coolify's checkout (`COPY` the manifests and `src/` from the
+  build context, with a guard that the checked-out version equals `GIT_TAG`, keeping the pin
+  honest and no credential in the build), or feed the clone a token through a BuildKit secret
+  mount (never a plain `ARG`: Coolify passes every environment variable as a build arg, and an
+  `ARG` value lands in the image history).

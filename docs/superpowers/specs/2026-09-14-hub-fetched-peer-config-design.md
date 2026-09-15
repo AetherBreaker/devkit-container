@@ -116,6 +116,10 @@ Recorded so they are not reopened.
 - **Private hub repo, token per spoke.** A fine-grained token is a plain string in the environment,
   scrubbed from the app like the private key. Rejected: public repo (the roster and the rules file
   would be readable by anyone).
+  Owner ruling, 2026-09-15: the repository is public for now, because the Dockerfile template
+  clones the repository inside the image build and cannot clone a private one (no other project is
+  private); the token path stays as designed and the proper fix is a devkit-container TODO. The
+  roster holds public keys, names and private-range addresses only.
 - **Peer identity by public key.** The spoke derives its public key from its private key, as it
   already does, and picks the bundle entry whose key matches. No name exists on the spoke side.
   Rejected: by service name (two repos must agree); a dedicated name variable (one more value).
@@ -205,7 +209,8 @@ Recorded so they are not reopened.
 
 ## 3. The hub project: `wireguard-hub`
 
-Repository `AetherBreaker/wireguard-hub`, private. Python package `wireguard_hub`, compose service
+Repository `AetherBreaker/wireguard-hub`, private by design and public for now (section 2, owner
+ruling 2026-09-15). Python package `wireguard_hub`, compose service
 and container name `wireguard-hub`, healthchecks.io slug `wireguard-hub`. A devkit-managed project
 like every other: `setup-project`, the devkit release command, the standard Dockerfile and compose
 scaffold, `aeth_ext` for heartbeat and alerts. Depends on sections 4, 7, 8 and 9.
