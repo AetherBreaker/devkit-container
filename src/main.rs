@@ -5,6 +5,10 @@
 // as dead code there; the attribute keeps the Windows build warning-free.
 mod bundle;
 mod cache;
+#[cfg(unix)]
+mod consent;
+#[cfg(unix)]
+mod fetch;
 mod health;
 mod healthcheck;
 #[cfg_attr(not(unix), allow(dead_code))] // `write` and the tunnel file serve the supervisor (Unix)
