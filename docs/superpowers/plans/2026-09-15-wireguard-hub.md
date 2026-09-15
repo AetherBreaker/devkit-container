@@ -90,7 +90,7 @@ Implementation details under the owner's ruling; listed so the owner can veto an
 **Files:**
 - Create: the three plan copies named above.
 
-- [ ] **Step 1: Copy this plan into the three other repositories and commit each on `main`**
+- [x] **Step 1: Copy this plan into the three other repositories and commit each on `main`**
 
 ```bash
 ws="/d/SFT Software Projects/SFT Workspace"
@@ -106,7 +106,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 done
 ```
 
-- [ ] **Step 2: Branch `wireguard-hub`**
+- [x] **Step 2: Branch `wireguard-hub`**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -115,7 +115,7 @@ git checkout main && git pull --ff-only
 git checkout -b feat/hub
 ```
 
-- [ ] **Step 3: Tick Task 0 and commit the tick**
+- [x] **Step 3: Tick Task 0 and commit the tick**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -137,7 +137,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `peers.parse(text: str) -> Table`, `peers.load(path: Path) -> Table`, `peers.default_path() -> Path`, `peers.rules_path() -> Path`, `peers.stamp(text: str, tag: str) -> str`, `peers.render_conf(table: Table, peer: Peer) -> str`, `peers.TAG_RE`, `peers.PeersError`; dataclasses `Hub`, `Peer`, `Table` (fields below). Tasks 2, 3 and 4 consume them.
 
-- [ ] **Step 1: Add `aeth-ext` and sync**
+- [x] **Step 1: Add `aeth-ext` and sync**
 
 In `pyproject.toml`, change `dependencies = ["devkit-container>=2.1.0"]` (keep the trailing `# setup-project added` comment tombi placed) to hold both:
 
@@ -156,7 +156,7 @@ uv run python -c "from aeth_ext.monitoring.heartbeat import send_heartbeat; prin
 
 Expected: `ok`. (The `[tool.uv.sources]` entry for `aeth-ext` already points at SFTPyPI.)
 
-- [ ] **Step 2: Write the package data**
+- [x] **Step 2: Write the package data**
 
 `src/wireguard_hub/peers.toml`, with the owner's hub public key (owner input 1) in place of `<HUB PUBLIC KEY>` and no peer rows until owner input 2:
 
@@ -194,7 +194,7 @@ persistent_keepalive = 25                      # default for every peer
 COMMIT
 ```
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 `tests/test_peers.py`:
 
@@ -286,7 +286,7 @@ def test_a_valid_table_parses_with_defaults_and_overrides():
     (('endpoint = "wireguard-hub:51820"', 'endpoint = "wireguard-hub:99999"'), "peers[1].endpoint"),
     (('allowed_ips = ["10.8.0.10/32"]', 'allowed_ips = ["10.8.0.10/33"]'), "peers[1].allowed_ips"),
     (("persistent_keepalive = 15", "persistent_keepalive = 65536"), "peers[1].persistent_keepalive"),
-    (("persistent_keepalive = 15\n", 'persistent_keepalive = 15\nextra = 1\n'), "peers[1].extra"),
+    (("persistent_keepalive = 15\n", "persistent_keepalive = 15\nextra = 1\n"), "peers[1].extra"),
     (("schema = 1\n", 'schema = 1\nhub_version = "1.2.3"\n'), "hub_version"),
     (("schema = 1\n", "schema = 1\nnote = 1\n"), "note"),
   ],
@@ -369,12 +369,12 @@ def test_every_address_in_rules_v4_is_a_peer_or_hub_address_and_the_policy_holds
     assert addr in known, f"{addr} is in rules.v4 but not in peers.toml"
 ```
 
-- [ ] **Step 4: Run the tests to see them fail**
+- [x] **Step 4: Run the tests to see them fail**
 
 Run: `cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub" && uv run pytest tests/test_peers.py tests/test_rules.py -q`
 Expected: collection errors, `No module named 'wireguard_hub.peers'`.
 
-- [ ] **Step 5: Implement `peers.py`**
+- [x] **Step 5: Implement `peers.py`**
 
 ```python
 """The peer table `peers.toml` (hub design 3.2): loading, validation, the stamped bundle (3.7) and a peer's conf.
@@ -572,7 +572,7 @@ def _key(d: dict[str, object], field: str) -> str:
   value = _text(d, field)
   try:
     raw = base64.b64decode(value, validate=True)
-  except (binascii.Error, ValueError):
+  except binascii.Error, ValueError:
     raw = b""
   if len(value) != KEY_CHARS or len(raw) != KEY_BYTES:
     raise PeersError(f"{field}: must be a {KEY_CHARS}-character base64 string of {KEY_BYTES} bytes")
@@ -625,12 +625,12 @@ def render_conf(table: Table, peer: Peer) -> str:
 
 Note on the `schema` line: `data.get("schema") is not 1` is deliberate (`1 == True` and `1 == 1.0` in Python; `is` against the small-int cache rejects both) but ruff flags it (F632); if the `noqa` does not silence it in this ruff version, use `type(data.get("schema")) is int and data["schema"] == 1` instead.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/test_peers.py tests/test_rules.py -q`
 Expected: all pass. `test_the_shipped_table_is_valid` needs the owner's real hub public key in `peers.toml` (owner input 1); with a placeholder it fails on `hub.public_key`, which is the stop for that input.
 
-- [ ] **Step 7: Lint, tick, commit**
+- [x] **Step 7: Lint, tick, commit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -655,7 +655,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `peers.load`, `peers.default_path`, `peers.rules_path` (Task 1).
 - Produces: `up.main() -> None` (the console script), module constants `IP_FORWARD: Path`, `PEERS_PATH: Path`, `RULES_PATH: Path` the tests redirect.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_up.py`:
 
@@ -757,12 +757,12 @@ def test_failures_name_the_cause_never_the_key(host: Recorder, monkeypatch: pyte
   assert "iptables-restore" in err and "exited 3" in err and "PRIVATE" not in err
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `uv run pytest tests/test_up.py -q`
 Expected: FAIL, `up` has no attribute `PEERS_PATH` (the stub only has `main`).
 
-- [ ] **Step 3: Implement `up.py`**
+- [x] **Step 3: Implement `up.py`**
 
 ```python
 """The startup script `wireguard-hub-up` (hub design 3.4).
@@ -824,12 +824,12 @@ def _fail(message: str) -> None:
 
 `_fail` is 2 lines used 5 times and `_run` 5 lines used 7 times: both clear the repository's helper rule by reuse.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `uv run pytest tests/test_up.py -q`
 Expected: 2 passed.
 
-- [ ] **Step 5: Lint, tick, commit**
+- [x] **Step 5: Lint, tick, commit**
 
 ```bash
 uv run ruff format && uv run ruff check && uv run pyright
@@ -851,7 +851,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `run_app() -> None` (the console script); `serve(host: str, port: int) -> ThreadingHTTPServer` (started on a daemon thread, returned for the tests to stop); `beat() -> bool` (one heartbeat, `False` when the interface is absent); module constants `HEARTBEAT_FILE`, `INTERFACE`, `BEAT_SECS`, `PORT`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_app.py`:
 
@@ -922,12 +922,12 @@ def test_the_ping_key_and_slug_go_only_when_no_supervisor_owns_the_ping(tmp_path
   assert seen[-1]["pingkey"] is None and seen[-1]["slug"] is None and seen[-1]["ping_url"] is None
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest tests/test_app.py -q`
 Expected: FAIL, `app` has no attribute `serve`.
 
-- [ ] **Step 3: Implement `__main__.py`**
+- [x] **Step 3: Implement `__main__.py`**
 
 ```python
 """The app `run-app-wireguard-hub` (hub design 3.5): the version endpoint and the heartbeat, nothing else.
@@ -1019,12 +1019,12 @@ if __name__ == "__main__":
   run_app()
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `uv run pytest tests/test_app.py -q`
 Expected: 3 passed.
 
-- [ ] **Step 5: Lint, tick, commit**
+- [x] **Step 5: Lint, tick, commit**
 
 ```bash
 uv run ruff format && uv run ruff check && uv run pyright
@@ -1047,7 +1047,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `peers.load`, `peers.stamp`, `peers.render_conf`, `peers.default_path` (Task 1).
 - Produces: `bundle.main(argv: list[str]) -> int`; `python -m wireguard_hub.bundle <tag> <out-dir>` writes `<out-dir>/peers.toml` and `<out-dir>/<peer name>.conf` and exits 0, or prints the validation error and exits 1.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_bundle.py`:
 
@@ -1082,7 +1082,9 @@ address = "10.8.0.10/32"
 """
 
 
-def test_the_bundle_is_the_stamped_table_and_one_conf_per_peer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+def test_the_bundle_is_the_stamped_table_and_one_conf_per_peer(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
   src = tmp_path / "peers.toml"
   src.write_text(TABLE, encoding="utf-8")
   monkeypatch.setattr(bundle, "SOURCE", src)
@@ -1105,12 +1107,12 @@ def test_invalid_input_exits_1_naming_the_field(tmp_path: Path, monkeypatch: pyt
   assert bundle.main(["v1.2.3"]) == 2
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `uv run pytest tests/test_bundle.py -q`
 Expected: collection error, `cannot import name 'bundle'`.
 
-- [ ] **Step 3: Implement `bundle.py`**
+- [x] **Step 3: Implement `bundle.py`**
 
 ```python
 """The release job's entry (hub design 3.7): `python -m wireguard_hub.bundle <tag> <out-dir>`.
@@ -1157,12 +1159,12 @@ if __name__ == "__main__":
   sys.exit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `uv run pytest tests/test_bundle.py -q`
 Expected: 2 passed.
 
-- [ ] **Step 5: Append the `peers` job to `release.yml`**
+- [x] **Step 5: Append the `peers` job to `release.yml`**
 
 Append to the end of `.github/workflows/release.yml` (after the `publish` job's last step, one blank line between):
 
@@ -1225,7 +1227,7 @@ uv run poe setup-project --dry-run 2>&1 | grep -A3 "release.yml"
 
 Expected: `.github/workflows/release.yml` is either absent from "Changed:" or listed with `kept job peers` and no other detail; in both cases the file on disk still ends with the `peers` job (`grep -c "^  peers:" .github/workflows/release.yml` prints `1`).
 
-- [ ] **Step 6: Write `ci.yml`**
+- [x] **Step 6: Write `ci.yml`**
 
 `.github/workflows/ci.yml`:
 
@@ -1276,7 +1278,7 @@ jobs:
         run: uv run python -m wireguard_hub.bundle v0.0.0 bundle && ls -l bundle
 ```
 
-- [ ] **Step 7: Lint, tick, commit**
+- [x] **Step 7: Lint, tick, commit**
 
 ```bash
 uv run ruff format && uv run ruff check && uv run pyright
@@ -1295,7 +1297,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Modify: `docker/compose.yaml`, `docker/Dockerfile`
 
-- [ ] **Step 1: Re-render for the `aeth-ext` environment block, then add the hub's lines**
+- [x] **Step 1: Re-render for the `aeth-ext` environment block, then add the hub's lines**
 
 Adding `aeth-ext` (Task 1) makes the compose template's `environment` block render (`HEARTBEAT_SLUG`, the `ALERTS_*` lines). Let `setup-project` write it, then add the hub's four lines by hand:
 
@@ -1330,7 +1332,7 @@ Edit `docker/Dockerfile`: inside the `final` window, between `# !window final:` 
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables && rm -rf /var/lib/apt/lists/*
 ```
 
-- [ ] **Step 2: Prove both survive a re-render**
+- [x] **Step 2: Prove both survive a re-render**
 
 ```bash
 uv run poe setup-project --dry-run 2>&1 | grep -B1 -A4 "docker/"
@@ -1338,7 +1340,7 @@ uv run poe setup-project --dry-run 2>&1 | grep -B1 -A4 "docker/"
 
 Expected: neither `docker/compose.yaml` nor `docker/Dockerfile` appears under "Changed:" (or the Dockerfile appears only with `kept 1 line(s) in window final` and no diff). `docker compose -f docker/compose.yaml config --quiet` exits 0 if Docker is available locally.
 
-- [ ] **Step 3: Build the image and run the startup script's checks in it (Docker available locally)**
+- [x] **Step 3: Build the image and run the startup script's checks in it (Docker available locally)**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -1348,9 +1350,11 @@ docker run --rm wireguard-hub:dev /app/.venv/bin/wireguard-hub-up; echo "exit=$?
 docker run --rm --cap-add NET_ADMIN --sysctl net.ipv4.ip_forward=1 -e WG_HUB_PRIVATE_KEY="$(docker run --rm wireguard-hub:dev wg genkey)" wireguard-hub:dev /app/.venv/bin/wireguard-hub-up; echo "exit=$?"
 ```
 
-Expected: the first run exits 1 with `WG_HUB_PRIVATE_KEY is not set`; the second exits 0 and logs `wg0 up, public key …, <n> peer(s)`. (If the image's build args or secrets differ from the rendered Dockerfile's `ARG`s, take them from the file; the build args and secret ids are the Dockerfile's, not this plan's. If the build needs the release tag to exist on GitHub, the `GIT_TAG` build arg can name the pushed branch's commit as above.)
+Expected: the first run exits 1 with `WG_HUB_PRIVATE_KEY is not set`; the second exits 0 and logs `wg0 up, public key …, <n> peer(s)`.
 
-- [ ] **Step 4: Tick, commit**
+Done 2026-09-15 in a stock `uv:python3.14-bookworm-slim` container with the tools installed and the tree mounted, not the rendered image: its `git clone` of this private repository would need a token in a build arg. Same commands, same result: exit 1 without the key; with a generated key `wg0` up at `10.8.0.1/24`, listen port 51820, `FORWARD DROP` plus the conntrack rule; the app answered `/version` with `200 text/plain; charset=utf-8` and `v0.1.0`, `404` elsewhere, and wrote the heartbeat file (mode 0644). (If the image's build args or secrets differ from the rendered Dockerfile's `ARG`s, take them from the file; the build args and secret ids are the Dockerfile's, not this plan's. If the build needs the release tag to exist on GitHub, the `GIT_TAG` build arg can name the pushed branch's commit as above.)
+
+- [x] **Step 4: Tick, commit**
 
 ```bash
 # tick Task 5 in the plan copy
@@ -1367,7 +1371,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Modify: `README.md`; create `TODO.md`
 
-- [ ] **Step 1: Write the README**
+- [x] **Step 1: Write the README**
 
 Replace `README.md` with:
 
@@ -1396,7 +1400,7 @@ Take the public key from the spoke's `not enrolled` log line, add a `[[peers]]` 
 Coolify: the compose file publishes UDP 51820 directly; the domain `tunnels.sweetfiretobacco.com` is attached to the `wireguard-hub` service on container port 8000 in the Coolify UI. Environment: `WG_HUB_PRIVATE_KEY`, `PINGKEY`, `ALERTS_EMAIL_PWD`. The host needs the WireGuard kernel module and the netfilter modules `iptables-nft` uses; the first-deploy checklist is section 16 of the design.
 ```
 
-- [ ] **Step 2: Record the TODO entries of spec 15 that are the hub's**
+- [x] **Step 2: Record the TODO entries of spec 15 that are the hub's**
 
 Create `TODO.md`:
 
@@ -1408,7 +1412,7 @@ Create `TODO.md`:
 - Preshared keys in fetched mode need a per-peer secret on the hub side (hub design 15).
 ```
 
-- [ ] **Step 3: Tick, commit**
+- [x] **Step 3: Tick, commit**
 
 ```bash
 # tick Task 6 in the plan copy
@@ -1422,7 +1426,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 7: verification, PR, CI, merge
 
-- [ ] **Step 1: The full local suite**
+- [x] **Step 1: The full local suite**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -1433,7 +1437,7 @@ uv run python -m wireguard_hub.bundle v0.0.0 "$TMPDIR/hub-bundle" && ls "$TMPDIR
 
 Expected: every command exits 0; the bundle folder holds `peers.toml` and one conf per row.
 
-- [ ] **Step 2: Push, open the PR, watch CI**
+- [x] **Step 2: Push, open the PR, watch CI**
 
 ```bash
 git push -u origin feat/hub
@@ -1454,7 +1458,7 @@ gh pr checks --watch
 
 Expected: the one CI job green.
 
-- [ ] **Step 3: Merge (owner's call), tick, commit**
+- [x] **Step 3: Merge (owner's call), tick, commit**
 
 The owner merges on GitHub or says to. Then:
 
@@ -1472,11 +1476,13 @@ git push
 
 ### Task 8: the first release, the pin, the deployment
 
-- [ ] **Step 1: The owner's peer rows (owner input 2)**
+- [x] **Step 1: The owner's peer rows (owner input 2)**
 
 If the owner supplies rows, add them to `src/wireguard_hub/peers.toml` on `main` in the 3.2 shape, run `uv run pytest`, commit as `feat(peers): enrol <names>` and push. Otherwise the first release ships the hub section alone.
 
-- [ ] **Step 2: Release 1.0.0 (owner's go-ahead first)**
+Owner's answer (2026-09-15): no peers yet; the first release ships the hub section alone. Rows follow with the enrolment of the SAP peer, the test client and the database PC client.
+
+- [x] **Step 2: Release 1.0.0 (owner's go-ahead first)**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/wireguard-hub"
@@ -1498,7 +1504,7 @@ gh release download v1.0.0 --pattern peers.toml --dir "$TMPDIR/v1" --clobber
 head -1 "$TMPDIR/v1/peers.toml"      # hub_version = "v1.0.0"
 ```
 
-- [ ] **Step 3: Pin the compose file to the release**
+- [x] **Step 3: Pin the compose file to the release**
 
 ```bash
 uv run poe docker-pin
@@ -1508,7 +1514,7 @@ grep -n "GIT_TAG\|PACKAGE_VERSION" docker/compose.yaml
 
 Expected: `GIT_TAG: v1.0.0` committed and pushed.
 
-- [ ] **Step 4: Tick, commit**
+- [x] **Step 4: Tick, commit**
 
 ```bash
 # tick Task 8 steps 1 to 3 in the plan copy
