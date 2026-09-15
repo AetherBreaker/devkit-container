@@ -32,15 +32,9 @@ services:
     # !end
     # !if keys("tool.docker.wireguard"):
       - WG_PRIVATE_KEY=${WG_PRIVATE_KEY:?}
-      - WG_ADDRESS=${WG_ADDRESS:?}
-      - WG_PEER_PUBLIC_KEY=${WG_PEER_PUBLIC_KEY:?}
-      - WG_PEER_ENDPOINT=${WG_PEER_ENDPOINT:?}
-      - WG_PEER_ALLOWED_IPS=${WG_PEER_ALLOWED_IPS:?}
-      - WG_PEER_PRESHARED_KEY=${WG_PEER_PRESHARED_KEY:-}
-      - WG_PERSISTENT_KEEPALIVE=${WG_PERSISTENT_KEEPALIVE:-}
-      - WG_HANDSHAKE_TIMEOUT_SECS=${WG_HANDSHAKE_TIMEOUT_SECS:-}
-      - WG_POLL_SECS=${WG_POLL_SECS:-}
-      - WG_STALE_SECS=${WG_STALE_SECS:-}
+      - WG_HUB_URL=${WG_HUB_URL:?}
+      - WG_HUB_REPO=${WG_HUB_REPO:?}
+      - WG_HUB_TOKEN=${WG_HUB_TOKEN:?}
     # !end
     # !if keys("tool.docker.wireguard"):
     # !rule presence
