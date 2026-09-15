@@ -1295,7 +1295,7 @@ git push
 **Files:**
 - Modify: `python/devkit_templates/templates/github/workflows/release.template.yml:1`, `release.rust.template.yml:1`, `pyproject.toml` (`[project].dependencies`), `uv.lock`
 
-- [ ] **Step 1: The header in both templates**
+- [x] **Step 1: The header in both templates**
 
 On branch `feat/kept-jobs-header` (Task 0), replace line 1 of both files
 
@@ -1310,7 +1310,7 @@ with
 # except the jobs named in `[tool.devkit].release-workflow-jobs`.
 ```
 
-- [ ] **Step 2: Raise the floor and re-lock**
+- [x] **Step 2: Raise the floor and re-lock**
 
 In `pyproject.toml`, change `dependencies    = ["aeth-devkit>=15.0.1"]` to `dependencies    = ["aeth-devkit>=15.1.0"]` (keep the alignment). Then, with 15.1.0 on the index (Task 5):
 
@@ -1323,7 +1323,7 @@ git diff --stat
 
 Expected: `uv.lock` now resolves `aeth-devkit` at 15.1.0 or newer; nothing else moves.
 
-- [ ] **Step 3: Render locally through the new devkit**
+- [x] **Step 3: Render locally through the new devkit**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/devkit-templates"
@@ -1333,7 +1333,7 @@ bash ci/render.sh docker "aeth-devkit==15.1.0"
 
 Expected: both end with `render ok: … through devkit 15.1.0`, and the rendered `.github/workflows/release.yml` in the scratch project starts with the two-line header.
 
-- [ ] **Step 4: Tick, commit, PR, CI, merge**
+- [x] **Step 4: Tick, commit, PR, CI, merge**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/devkit-templates"
@@ -1359,7 +1359,7 @@ gh pr checks --watch
 
 Expected: every matrix cell green. The owner merges.
 
-- [ ] **Step 5: Release 1.3.0 (owner's go-ahead first)**
+- [x] **Step 5: Release 1.3.0 (owner's go-ahead first)**
 
 ```bash
 cd "/d/SFT Software Projects/SFT Workspace/devkit-templates"
@@ -1445,7 +1445,9 @@ git push --force-with-lease
 git checkout main
 ```
 
-- [ ] **Step 2: Sync the fully ticked plan to every copy**
+Not ticked yet: the rebase, the checks and the log are done; the force push waits for the owner's word (2026-09-15).
+
+- [x] **Step 2: Sync the fully ticked plan to every copy**
 
 The `aeth_devkit` copy holds the ticks for Tasks 0 to 5 and 8; merge them by hand with the `devkit-templates` copy (Task 6) and the `devkit-container` copy (Task 7) into one file in which every box is ticked, then write that file over all three copies and commit each:
 
@@ -1463,7 +1465,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 done
 ```
 
-- [ ] **Step 3: Report to the owner**
+- [x] **Step 3: Report to the owner**
 
 State, in this order: the two releases and their versions; the `devkit-container` render job's result; the rebase result; the spec's next release-order step (14 step 3, the `wireguard-hub` repository, which gets its own plan from sections 3, 4 and 16 of the same spec); and that the spec and plan copies stay in all three repositories until the whole multi-stage change has landed (owner's instruction, 2026-09-15).
 
@@ -1475,4 +1477,4 @@ State, in this order: the two releases and their versions; the `devkit-container
 
 **Placeholders.** None: every code step carries its code, every command its expected result. The real template's end-to-end render is Task 7, through the released devkit, since `setup-project` only reads the container template from a venv.
 
-**Type consistency.** `Body::Window(String)` (Task 1) is matched as `Body::Window(name)` in Task 2; `windows::splice(&str, &str) -> Result<(String, Vec<String>)>` is called with `(&rendered, &normalize_newlines(&original))` in Task 2 Step 8; `ProjectContext::release_workflow_jobs: Vec<String>` (Task 3) is passed as `&ctx.release_workflow_jobs` to `kept_jobs::splice(&str, &str, &[String]) -> Result<Kept>` in Task 4; `Kept { text, details, notes }` is consumed field by field there.
+**Type consistency.** `Body::Window(String)` (Task 1) is matched as `Body::Window(name)` in Task 2; `windows::splice(&str, &str) -> Result<Spliced>` (`Spliced { text, details, notes }`) is called with `(&rendered, &normalize_newlines(&original))` in Task 2 Step 8; `ProjectContext::release_workflow_jobs: Vec<String>` (Task 3) is passed as `&ctx.release_workflow_jobs` to `kept_jobs::splice(&str, &str, &[String]) -> Result<Kept>` in Task 4; `Kept { text, details, notes }` is consumed field by field there.
