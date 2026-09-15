@@ -118,8 +118,8 @@ pub fn run(args: &RunArgs) -> Result<u8> {
       None => match env("WG_POLL_SECS") {
         None => 30,
         Some(v) => match v.parse::<u64>() {
-          Ok(n) if n >= 1 => n,
-          _ => bail!("WG_POLL_SECS must be a whole number of seconds, at least 1"),
+          Ok(n) if (1..=wireguard::MAX_SECS).contains(&n) => n,
+          _ => bail!("WG_POLL_SECS must be a whole number of seconds, 1 to {}", wireguard::MAX_SECS),
         },
       },
     };
