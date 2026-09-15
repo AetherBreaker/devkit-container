@@ -82,10 +82,12 @@ jobs:
       - name: sudo modprobe wireguard
         run: sudo modprobe wireguard
 
-      - name: cargo test --test docker_smoke --test docker_supervisor -- --ignored (builds the image, runs the entrypoint in exec, supervise and wireguard mode)
+      - name: cargo test --test docker_smoke --test docker_supervisor --test docker_fetched -- --ignored (builds the image, runs the entrypoint in exec, supervise, environment and fetched mode)
+        env:
+          DEVKIT_SMOKE_WG_HUB_TOKEN: ${{ secrets.DEVKIT_SMOKE_WG_HUB_TOKEN }}
         run: |
           uv sync
-          cargo test --test docker_smoke --test docker_supervisor -- --ignored --nocapture
+          cargo test --test docker_smoke --test docker_supervisor --test docker_fetched -- --ignored --nocapture
 
   # The two templates meet the released devkit's parser here, before a release of this repo.
   render:

@@ -55,6 +55,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   extras=$(/app/.venv/bin/devkit-container app-extra) \
   && uv sync --frozen --no-dev --no-editable $extras
 
+# Project additions to the builder stage; setup-project renders the template around this window.
+# !window builder:
+# !end builder
+
 # ---- Final stage ----
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
@@ -68,6 +72,10 @@ RUN groupadd --system --gid 999 nonroot \
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \
   && rm -rf /var/lib/apt/lists/*
 # !end
+
+# Project additions to the final stage; setup-project renders the template around this window.
+# !window final:
+# !end final
 
 WORKDIR /app
 
