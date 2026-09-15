@@ -624,20 +624,19 @@ to 30 s, SIGKILL, `wg0` down, exit 75.
 
 ### 5.6 Repairs while Disconnected
 
-Every poll while Disconnected, in this order, stopping at the first that yields Connected on the
-next poll:
+Every poll while Disconnected, both steps in the same poll, neither waiting for the other:
 
 1. Under the switch, when the boot got no configuration: try to obtain one (4.1 to 4.4) and apply
-   it. In fetched mode with a configuration applied, also query the version endpoint; a new tag
-   is fetched and applied exactly as in 5.5, because a hub change is a common cause of
-   disconnection. Either runs on the worker thread of 5.2 step 7, one attempt in flight; the
-   apply happens inline at the poll that receives the result.
-2. Otherwise alternate: on the first Disconnected poll after a Connected one, re-set the endpoint
-   (`wg set wg0 peer <key> endpoint <endpoint>`, which re-resolves the name and leaves the
-   interface running); on the next, bring `wg0` down and up with the applied configuration (the
-   apply of 5.2 step 3, the endpoint last); then the endpoint again, then down and up, alternating.
-   Every re-up is logged. The sequence starts over at the endpoint re-set after every Connected
-   poll and after a configuration is applied by step 1.
+   it. In fetched mode with a configuration applied: query the version endpoint; a new tag is
+   fetched and applied exactly as in 5.5, because a hub change is a common cause of
+   disconnection. Either runs on the worker thread of 5.2 step 7, one attempt in flight, started
+   only when none is; the apply happens inline at the poll that receives the result.
+2. With a configuration applied, alternate: on the first Disconnected poll after a Connected one,
+   re-set the endpoint (`wg set wg0 peer <key> endpoint <endpoint>`, which re-resolves the name
+   and leaves the interface running); on the next, bring `wg0` down and up with the applied
+   configuration (the apply of 5.2 step 3, the endpoint last); then the endpoint again, then down
+   and up, alternating. Every re-up is logged. The sequence starts over at the endpoint re-set
+   after every Connected poll and after a configuration is applied by step 1.
 
 The clock is not reset by a repair attempt, only by Connected. The repair never runs on a
 Connected tunnel.
