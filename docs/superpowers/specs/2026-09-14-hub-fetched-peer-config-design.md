@@ -628,7 +628,8 @@ to 30 s, SIGKILL, `wg0` down, exit 75.
 
 Every poll while Disconnected, both steps in the same poll, neither waiting for the other:
 
-1. Under the switch, when the boot got no configuration: try to obtain one (4.1 to 4.4) and apply
+1. Under the switch, when the boot got no configuration: try to obtain one (4.1 to 4.3, the fetch
+   alone: the cache was the boot's fallback and only changes on a successful fetch) and apply
    it. In fetched mode with a configuration applied: query the version endpoint; a new tag is
    fetched and applied exactly as in 5.5, because a hub change is a common cause of
    disconnection. Either runs on the worker thread of 5.2 step 7, one attempt in flight, started
