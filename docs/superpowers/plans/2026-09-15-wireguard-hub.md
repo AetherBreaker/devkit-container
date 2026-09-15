@@ -51,7 +51,7 @@ The owner's ruling on what "stop" means (2026-09-15): stop only when the fix wou
 - The `peers` job (3.7): same release event, own `permissions: contents: write`, guards as the publish job (checks out `github.sha`, verifies the release still owns the tag before uploading), validates, stamps, renders `<peer name>.conf` per peer in the given ini shape, attaches `peers.toml` and every conf; fails the run on invalid input. Every push also validates through the hand-written `ci.yml`.
 - Addresses and port (11): subnet `10.8.0.0/24`, hub `10.8.0.1/24`, `listen_port` and UDP port 51820, endpoint `tunnels.sweetfiretobacco.com:51820`, `allowed_ips = ["10.8.0.0/24"]`, `persistent_keepalive = 25`.
 - The release is the devkit release command, unchanged (3.7); it publishes to SFTPyPI and creates a GitHub release, so the executor asks the owner before running it.
-- Commands run from the repository root, Bash syntax (Git Bash on Windows). `uv` needs the SFTPyPI credentials in the environment: `set -a; . ./.env; set +a` before `uv sync`, never printing `.env`.
+- Commands run from the repository root, Bash syntax (Git Bash on Windows). `uv` needs the SFTPyPI credentials in the environment: the hub's own rendered `.env` carries none, so load devkit-container's: `set -a; . "../devkit-container/.env"; set +a` before `uv sync`, `devkit release` and `poe docker-pin`, never printing it.
 
 ## Decisions this plan makes where the spec is silent
 

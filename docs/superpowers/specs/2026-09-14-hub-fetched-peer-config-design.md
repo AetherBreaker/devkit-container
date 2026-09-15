@@ -357,7 +357,16 @@ healthcheck; the hub's own additions are written by hand once and survive every 
 Coolify: the domain `tunnels.sweetfiretobacco.com` is attached to the `wireguard-hub` service on
 container port 8000 in the Coolify UI, which provides the Traefik route and the certificate; the
 UDP port is published directly by compose and never passes through Traefik. Environment values:
-`WG_HUB_PRIVATE_KEY`, plus the standard `PINGKEY` and alert values every project has.
+`WG_HUB_PRIVATE_KEY`, plus the standard `PINGKEY` and alert values every project has. Learned on
+the first deploy (2026-09-15): the domain is entered in Coolify as
+`https://tunnels.sweetfiretobacco.com:8000`, the port in the URL being how Coolify tells Traefik
+the container port; the healthchecks.io check `wireguard-hub` is auto-provisioned by `PINGKEY`
+with period 1 minute and grace 3 minutes, matching the app's 60 s beat and the devkit
+healthcheck's 180 s staleness; and Coolify passes every environment variable to the image build
+as a `--build-arg`, so no Dockerfile in this design may declare a secret as an `ARG` (a build
+arg's value lands in the image history). The image is built from the Dockerfile of the checked-out
+branch while the source is cloned at `GIT_TAG`, so a drift of `docker/Dockerfile` on `main`
+reaches the next build even when the pin does not move.
 
 ### 3.7 Release, and the kept job in `release.yml`
 
@@ -789,6 +798,7 @@ are rendered. "Scrubbed" means removed from the app's environment.
 | `WG_HUB_PRIVATE_KEY` | hub | yes | | by hand in the hub's compose file (3.6) | via `scrub_env` |
 | `DEVKIT_CONSENT_SOCKET` | set on the app | | | set by `run` under `supervise` | |
 | `DEVKIT_SUPERVISED_PING` | set on the app | | | unchanged | |
+| `ALERTS_EMAIL_PWD` | hub | yes: `aeth_ext` builds its settings at import and requires it | | by the compose template's `aeth-ext` block | no |
 | `HEARTBEAT_SLUG`, `PINGKEY`, `ALERTS_HEALTHCHECK_PING_URL` | both | | | unchanged | |
 
 Format rules: `WG_HUB_REPO` is `owner/repo`; `WG_HUB_URL` per 4.1; every `*_SECS` an integer at
@@ -880,7 +890,8 @@ Two devkit changes serve this document, both in `aeth-devkit`'s `setup-project`:
 job (3.7, with its header line in `devkit-templates`) and the Dockerfile windows (9.3): the marker
 word `window` joins the four the gate pass accepts, its markers survive rendering, and the
 Dockerfile step splices the existing file's window contents into the rendered text before the
-diff. Everything else the templates need already holds: `keys()` returns the value at a path,
+diff. So does every other render of the file: `docker-pin`'s Dockerfile refresh dropped a filled
+window until aeth-devkit 15.1.1 (found on the hub's first deploy, 2026-09-15). Everything else the templates need already holds: `keys()` returns the value at a path,
 `None` when absent; `env-keys` only appends and no rule removes a key, which is what lets the hub
 keep its hand-written compose additions (3.6); and `setup-project` validates no `[tool.docker]`
 key beyond `services`, the silence flag and the two legacy keys, so `startup_scripts` and
@@ -1083,6 +1094,17 @@ to stdin; the `/version` response; the heartbeat gating on the interface path an
 4. Spokes re-rendered and migrated per 10.1, `tunnel-probe` created the same way as the hub; the
    office PC per 10.2.
 5. The first-deploy checklist of section 16, in order.
+
+Status, 2026-09-15: steps 1 to 3 are done and deployed: aeth-devkit 15.1.1 (15.1.0 the features,
+15.1.1 the `docker-pin` window fix), devkit-templates 1.3.0, devkit-container 2.1.0, wireguard-hub
+1.0.0 with an empty roster, healthy in Coolify and on healthchecks.io, `/version` answering over
+the public name; every devkit repository is locked on those versions. Section 16 steps 1 to 3
+hold; step 4 waits for the first peer. Step 4 of this list is next and gets its own plan from
+sections 5, 8, 10 and 16. Open before it: the production token of section 11 is not created yet
+(with the repository public for now the spokes could fetch without one; the plan should still
+create and use it so nothing changes when the repository goes private again), and the database
+decision of section 11 stays deferred, gating `tunnel-probe`'s query and the per-flow rules but
+not the tunnels. The smoke-test fixture repository and its secret on devkit-container exist.
 
 ## 15. TODO entries to record in this repo at implementation
 
