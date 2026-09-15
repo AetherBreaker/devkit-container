@@ -909,9 +909,11 @@ every image), so the release order of 14 is what keeps the two in step.
 - `pyproject.toml`: unchanged, `wireguard = true`.
 - Run `setup-project` after this repo's release. Then, by hand, remove the ten old `WG_*` lines
   from `docker/compose.yaml`; the rule engine does not remove keys.
-- Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL=https://tunnels.sweetfiretobacco.com`,
-  `WG_HUB_REPO=AetherBreaker/wireguard-hub`, `WG_HUB_TOKEN`. The six old peer values of 5.1, if
-  present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
+- Coolify environment: `WG_PRIVATE_KEY`, `WG_HUB_URL`, `WG_HUB_REPO=AetherBreaker/wireguard-hub`,
+  `WG_HUB_TOKEN`. `WG_HUB_URL` is `http://wireguard-hub:8000` for a spoke on the hub's host,
+  since the public name does not hairpin there (16); it would be
+  `https://tunnels.sweetfiretobacco.com` for a spoke elsewhere. The six old peer values of 5.1,
+  if present from an earlier deploy, are removed; the binary refuses them alongside `WG_HUB_URL`.
   No token while the hub repository is public (owner ruling, 2026-09-15): the template renders
   `WG_HUB_TOKEN=${WG_HUB_TOKEN:-}` from devkit-container 2.1.1, empty when unset, which the
   binary reads as absent (8, 4.2). A compose file rendered earlier keeps its `:?` line, since
@@ -1156,9 +1158,11 @@ is recorded in `aeth_ext`'s own `TODO.md`, not here.
 Host requirements, in addition to the kernel WireGuard module the wireguard mode already needs:
 the host kernel provides the netfilter modules `iptables` needs (`nf_tables` and the
 `xt_conntrack` match on bookworm's `iptables-nft`); Coolify passes `sysctls` and `ports` through
-for the hub; the Docker hairpin path works for both UDP 51820 and HTTPS 443 to the public name
-from a container on the same host. The per-peer `endpoint` override in 3.2 is the fallback for
-the hairpin.
+for the hub. The Docker hairpin path to the public name from a container on the same host
+does not work (found 2026-09-15: HTTPS 443 times out from the `coolify` network while the host
+and the container name `wireguard-hub` answer), so the two VPS-side spokes use the fallback of
+3.2, `endpoint = "wireguard-hub:51820"` on their rows (hub 1.3.0), and `WG_HUB_URL` on the
+Docker network (10.1). Only a spoke elsewhere uses the public name and the published port.
 
 First deploy, in this order, each a hard stop if it fails:
 
@@ -1169,9 +1173,9 @@ First deploy, in this order, each a hard stop if it fails:
    the hub's tag; the hub's heartbeat is fresh.
 - [ ] 4. The hub and the office PC handshake with each other before any app is involved.
 - [ ] 5. ScheduledReportAggregator's first start is refused with `not enrolled` and its key in the log;
-   enrolled and redeployed, it fetches the bundle, handshakes with the hub at the public endpoint
-   (the hairpin check), and both of its heartbeat files are fresh; `docker inspect` shows
-   `cap_add` passed through.
+   enrolled and redeployed, it fetches the bundle, handshakes with the hub at the endpoint its
+   row names (the Docker network, per the hairpin finding above), and both of its heartbeat
+   files are fresh; `docker inspect` shows `cap_add` passed through.
 - [ ] 6. A hub release that changes nothing for the spoke is picked up within the version poll interval
    with no re-apply logged; one that changes its keepalive is applied in place without the
    interface going down.
