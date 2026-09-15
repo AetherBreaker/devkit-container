@@ -916,9 +916,15 @@ every image), so the release order of 14 is what keeps the two in step.
   the hub's `peers.toml` (3.8), release the hub, redeploy the spoke.
 - Neither adopts consent in this change: the app-side helper is deferred (6.4), and
   non-participation reads as consent.
-- `tunnel-probe` is a spoke whose app, in this document, only heartbeats. Its database query,
-  which exercises the Python connection-and-query workflow over the tunnel outside production, is
-  the next phase's (section 11), as is its database client.
+- `tunnel-probe` is a one-shot sandbox (owner ruling, 2026-09-15): its app is a placeholder that
+  prints one line and exits 0, replaced by hand with whatever smoke test the owner wants run over
+  the tunnel from inside Coolify. It uses neither `aeth_ext` nor healthchecks.io; the rendered
+  heartbeat and healthcheck lines stay as the template emits them and are ignored, and Coolify
+  reporting the exited container as unhealthy is accepted. `restart: no` makes each deploy one
+  run. Its key pair was generated at enrolment and its row added to the hub before its first
+  deploy, so its first start is not refused. Its database query, which exercises the Python
+  connection-and-query workflow over the tunnel outside production, is the next phase's
+  (section 11), as is its database client.
 
 ### 10.2 The office PC
 
@@ -934,8 +940,8 @@ Delegated to this document and decided here:
 - Hub repository `AetherBreaker/wireguard-hub`; package `wireguard_hub`; service, container and
   healthchecks.io slug `wireguard-hub`.
 - The test project: repository `AetherBreaker/tunnel-probe`; package `tunnel_probe`; service,
-  container, healthchecks.io slug and peer-table name `tunnel-probe`; conf asset
-  `tunnel-probe.conf`.
+  container and peer-table name `tunnel-probe`; conf asset `tunnel-probe.conf`. No healthchecks.io
+  check: it is a one-shot sandbox (10.1).
 - The hub's kept release job is named `peers` (3.7).
 - The Dockerfile windows are named `builder` and `final`, marked `# !window <name>:` and
   `# !end <name>` (9.3).
