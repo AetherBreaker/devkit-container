@@ -589,7 +589,8 @@ pub mod unix {
     }
     if exit_code != 0 {
       log.line(&format!("app exited with {exit_code}"));
-      send(&mut inflight, Kind::Fail, &format!("exit code {exit_code}"));
+      // Synchronous like the other exit paths: `send` would skip it behind an in-flight ping.
+      send_now(&mut inflight, &format!("exit code {exit_code}"));
     }
     // The container ends with this process; give the last ping its chance to leave.
     if let Some(h) = inflight {
