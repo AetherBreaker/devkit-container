@@ -127,7 +127,7 @@ after every task.
 
 - Produces: `bundle::validate_tag(&str) -> Result<String>`; `bundle::Bundle { hub_version: Option<String>, hub: Hub, peers: Vec<Peer> }`; `bundle::Hub`; `bundle::Peer`; `bundle::parse(&str) -> Result<Bundle>`.
 
-- [ ] **Step 1: Declare the module**
+- [x] **Step 1: Declare the module**
 
 In `src/main.rs`, after `mod healthcheck;` add:
 
@@ -136,7 +136,7 @@ In `src/main.rs`, after `mod healthcheck;` add:
 mod bundle;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/bundle.rs` with the module doc, the `#![allow(dead_code)]` line and only the tests
 module first:
@@ -276,12 +276,12 @@ persistent_keepalive = 15
 }
 ```
 
-- [ ] **Step 3: Run the tests to see them fail**
+- [x] **Step 3: Run the tests to see them fail**
 
 Run: `cargo test bundle`
 Expected: compile errors, `validate_tag` and `parse` not found.
 
-- [ ] **Step 4: Implement the module**
+- [x] **Step 4: Implement the module**
 
 Insert the implementation between the `#![allow(dead_code)]` line and `#[cfg(test)]`:
 
@@ -563,13 +563,13 @@ fn allowed_ips(t: &dyn TableLike, at: &str) -> Result<Option<Vec<String>>> {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test bundle`
 Expected: all six pass. If a case in `every_rule_of_3_2_rejects_with_the_field_named` fails on
 the field name, fix the message, not the test: the spec says every failure names the field.
 
-- [ ] **Step 6: Lint and commit**
+- [x] **Step 6: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 Expected: clean.
@@ -595,7 +595,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `Bundle`, `Hub`, `Peer` from task 1.
 - Produces: `bundle::Effective { address, hub_public_key, endpoint, allowed_ips: Vec<String>, keepalive: u32 }` with `PartialEq` comparing allowed IPs as sets; `bundle::select(&Bundle, public_key: &str) -> Option<Effective>`; `bundle::require_version(&Bundle, tag: &str) -> Result<()>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append inside the `tests` module of `src/bundle.rs`:
 
@@ -647,12 +647,12 @@ Append inside the `tests` module of `src/bundle.rs`:
   }
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test bundle`
 Expected: compile errors, `select`, `Effective`, `require_version` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add above the `tests` module:
 
@@ -701,12 +701,12 @@ pub fn require_version(bundle: &Bundle, tag: &str) -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test bundle`
 Expected: all nine pass.
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -733,7 +733,7 @@ The old `Config` stays in the file until task 11 deletes it; `Settings` is added
 - Consumes: `bundle::Effective` (task 2).
 - Produces: `wireguard::SECRET_VARS: [&str; 3]`; `wireguard::Mode::{Env { effective: Effective, preshared_key: Option<String> }, Fetched { hub_url: String, repo: String, token: Option<String> }}`; `wireguard::Settings { private_key, mode, tolerate: bool, poll_secs, stale_secs, handshake_timeout_secs, limit_secs, hold_limit_secs, version_poll_secs }` with `Settings::from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Settings>`; `wireguard::validate_hub_url(&str) -> Result<String>`; `wireguard::validate_repo(&str) -> Result<String>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Inside the existing `tests` module of `src/wireguard.rs`, add:
 
@@ -852,12 +852,12 @@ Inside the existing `tests` module of `src/wireguard.rs`, add:
   }
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test wireguard`
 Expected: compile errors: `Settings`, `Mode`, `validate_hub_url`, `validate_repo` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 At the top of `src/wireguard.rs`, replace the module doc, the imports and the secret list, and
 add the settings after the existing `Config` block (before `Action`):
@@ -1032,12 +1032,12 @@ pub fn validate_repo(s: &str) -> Result<String> {
 The old `Config` block keeps working as it is (it goes in task 11); if the new import line
 duplicates the old `use anyhow::…` line, keep one line with the union of the names.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test wireguard`
 Expected: the five new tests and the four existing ones pass.
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -1062,7 +1062,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - Produces: `health::Reason::{NoHandshake, EndpointUnresolvable, ConfigUnavailable, NotEnrolled}` with `as_str()`; `health::State::{Connected, Disconnected(Reason)}` with `describe()`; `health::Interface::{Unconfigured(Reason), Configured { endpoint_ok: bool }}`; `health::Reply::{Ok, Hold}`; `health::Repair::{None, Obtain, ResetEndpoint, DownUp}`; `health::GiveUp { elapsed: u64, hold_limit: bool }`; `health::Decision { state, changed, repair, check_version, ask: Option<u64>, give_up: Option<GiveUp> }`; `health::Health::new(tolerate, fetched, limit_secs, hold_limit_secs)`, `Health::poll(&mut self, now: u64, iface, fresh, reply: Option<Reply>) -> Decision`, `Health::config_applied(&mut self)`; `health::ASK_INTERVAL_SECS = 60`.
 
-- [ ] **Step 1: Declare the module**
+- [x] **Step 1: Declare the module**
 
 In `src/main.rs`, after the `bundle` line:
 
@@ -1071,7 +1071,7 @@ In `src/main.rs`, after the `bundle` line:
 mod health;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/health.rs`:
 
@@ -1206,12 +1206,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to see them fail**
+- [x] **Step 3: Run the tests to see them fail**
 
 Run: `cargo test health`
 Expected: compile errors, nothing defined.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Insert between the `#![allow(dead_code)]` line and `#[cfg(test)]`:
 
@@ -1417,14 +1417,14 @@ impl Health {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test health`
 Expected: all eight pass. If the ask test fails on a number, check the arithmetic by hand: the
 clock starts at the first Disconnected poll (10), so 1810 is 1800 in, and a reply at 1870 sets
 the next ask at 1930.
 
-- [ ] **Step 6: Lint and commit**
+- [x] **Step 6: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -1450,7 +1450,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `prepare::NONROOT`, `heartbeat::logs_dir`.
 - Produces: `cache::DIR = "persisted_data/wireguard"`, `cache::FILE = "peers.toml"`, `cache::dir(app_root) -> PathBuf`, `cache::path(app_root) -> PathBuf`, `cache::write(app_root, text) -> Result<()>`, `cache::read(app_root) -> Result<String>`; `logfile::FILE = "devkit-container.log"`, `logfile::Log::new(app_root) -> Log`, `Log::path() -> &Path`, `Log::line(&self, msg: &str)`.
 
-- [ ] **Step 1: Declare the modules**
+- [x] **Step 1: Declare the modules**
 
 In `src/main.rs`, after the `health` line:
 
@@ -1461,7 +1461,7 @@ mod cache;
 mod logfile;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/cache.rs`:
 
@@ -1548,12 +1548,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to see them fail**
+- [x] **Step 3: Run the tests to see them fail**
 
 Run: `cargo test cache && cargo test logfile`
 Expected: compile errors.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 In `src/cache.rs`, between the allow line and the tests:
 
@@ -1642,12 +1642,12 @@ impl Log {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test cache && cargo test logfile`
 Expected: four tests pass.
 
-- [ ] **Step 6: Lint and commit**
+- [x] **Step 6: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -1673,7 +1673,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `health::Reply`.
 - Produces: `consent::DIR = "/run/devkit"`, `consent::SOCKET = "/run/devkit/consent.sock"`, `consent::TIMEOUT = 60 s`, `consent::ask(path: &Path, reason: &str, timeout: Duration) -> Reply`.
 
-- [ ] **Step 1: Declare the module**
+- [x] **Step 1: Declare the module**
 
 In `src/main.rs`, after the `logfile` line:
 
@@ -1682,7 +1682,7 @@ In `src/main.rs`, after the `logfile` line:
 mod consent;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/consent.rs`:
 
@@ -1761,12 +1761,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to see them fail**
+- [x] **Step 3: Run the tests to see them fail**
 
 Run: `cargo test consent`
 Expected: compile errors (`ask`, `Reply` not found).
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Between the allow line and the tests:
 
@@ -1805,12 +1805,12 @@ fn reply_line(path: &Path, reason: &str, timeout: Duration) -> Option<String> {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test consent`
 Expected: both pass (the silent case takes 200 ms).
 
-- [ ] **Step 6: Lint and commit**
+- [x] **Step 6: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -1837,7 +1837,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `bundle::{parse, require_version, select, validate_tag, Effective}`, `ping::agent()`.
 - Produces: `fetch::Hosts { api, web }` with `Default` (the real GitHub hosts); `fetch::Fetcher::new(hub_url, repo, token: Option<String>, hosts) -> Fetcher` (`Clone`); `Fetcher::version(&self) -> Result<String>`; `Fetcher::bundle(&self, tag) -> Result<String>`; `fetch::Outcome::{Unchanged(String), New { tag, text, effective }, NotEnrolled { tag, text }, Unavailable(String)}`; `fetch::obtain(&Fetcher, public_key: &str, applied_tag: Option<&str>) -> Outcome`.
 
-- [ ] **Step 1: Add the dependency and declare the module**
+- [x] **Step 1: Add the dependency and declare the module**
 
 In `Cargo.toml`, inside `[target.'cfg(unix)'.dependencies]`, add after the `ureq` line:
 
@@ -1855,7 +1855,7 @@ In `src/main.rs`, after the `consent` line:
 mod fetch;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/fetch.rs`:
 
@@ -2087,12 +2087,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to see them fail**
+- [x] **Step 3: Run the tests to see them fail**
 
 Run: `cargo test fetch`
 Expected: compile errors.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Between the allow line and the tests:
 
@@ -2301,13 +2301,13 @@ pub fn obtain(f: &Fetcher, public_key: &str, applied_tag: Option<&str>) -> Outco
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test fetch`
 Expected: five tests pass. The listener answers from a thread, so a test that hangs means the
 request never arrived: check the route path against what the fetcher builds.
 
-- [ ] **Step 6: Lint and commit**
+- [x] **Step 6: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -2331,7 +2331,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - Produces: `pyproject::startup_scripts(&DocumentMut) -> Result<Vec<String>>`; `pyproject::scrub_env(&DocumentMut) -> Result<Vec<String>>`; `run::run_startup_scripts(app_root: &Path, names: &[String]) -> Result<()>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src/pyproject.rs`'s `tests` module, add:
 
@@ -2401,12 +2401,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test pyproject && cargo test run::`
 Expected: compile errors, the three functions not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/pyproject.rs`, after `services`:
 
@@ -2474,13 +2474,13 @@ pub fn run_startup_scripts(app_root: &Path, names: &[String]) -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test pyproject && cargo test run::`
 Expected: pass on Linux; on Windows the `run` test does not exist (the module is Linux only)
 and the pyproject test passes.
 
-- [ ] **Step 5: Lint and commit**
+- [x] **Step 5: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -2508,7 +2508,7 @@ The old `Tunnel`, `Config`, `Action` and `Assessor` stay until task 11. The plan
 - Consumes: `bundle::Effective`.
 - Produces: `wireguard::IFACE = "wg0"`; `wireguard::Cmd { program: &'static str, args: Vec<String>, kind: CmdKind }`; `wireguard::CmdKind::{Local, Endpoint}`; `wireguard::apply_commands(&Effective) -> Vec<Cmd>`; `wireguard::endpoint_command(&Effective) -> Cmd`; `wireguard::reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> Vec<Cmd>`; on Linux `wireguard::ApplyError::{Local(anyhow::Error), Endpoint(anyhow::Error)}` and `wireguard::Interface` with `create(private_key: &str, preshared_key: Option<String>) -> Result<Interface>` (field `public_key: String`), `apply(&self, &Effective) -> Result<(), ApplyError>`, `set_endpoint(&self, &Effective) -> Result<(), ApplyError>`, `reapply(&self, old, new, endpoint_ok) -> Result<(), ApplyError>`, `down_up(&self, &Effective) -> Result<(), ApplyError>`, `latest_handshake(&self, peer_key: &str) -> Result<Option<u64>>`, `wait_handshake(&self, peer_key: &str, timeout: Duration) -> Result<bool>`, `down(&self)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In the `tests` module of `src/wireguard.rs`, add:
 
@@ -2616,12 +2616,12 @@ In the `tests` module of `src/wireguard.rs`, add:
   }
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `cargo test wireguard`
 Expected: compile errors, `Cmd` and the planners not found.
 
-- [ ] **Step 3: Implement the planner**
+- [x] **Step 3: Implement the planner**
 
 Add to `src/wireguard.rs`, after `validate_repo` and before `Action`:
 
@@ -2745,12 +2745,12 @@ pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> 
 }
 ```
 
-- [ ] **Step 4: Run the planner tests**
+- [x] **Step 4: Run the planner tests**
 
 Run: `cargo test wireguard`
 Expected: the two new tests pass with the earlier ones.
 
-- [ ] **Step 5: Add the Linux `Interface` beside the old `Tunnel`**
+- [x] **Step 5: Add the Linux `Interface` beside the old `Tunnel`**
 
 Inside the existing `#[cfg(unix)] mod unix`, add after `Tunnel`'s `impl` block, reusing the
 module's `run` function and `IFACE` (remove the module's own `pub const IFACE` and import the
@@ -2884,7 +2884,7 @@ next to the existing `pub use unix::Tunnel;`:
 pub use unix::{ApplyError, Interface, Tunnel};
 ```
 
-- [ ] **Step 6: Build on both platforms' terms and commit**
+- [x] **Step 6: Build on both platforms' terms and commit**
 
 Run: `cargo test wireguard && cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 Expected: green. The new `Interface` is unused until task 11; clippy is quiet because the
@@ -2913,7 +2913,7 @@ loop is rewritten in task 11.
 
 - Produces (inside the Linux module of `supervisor.rs`): `Waker::new() -> Result<Waker>` registering SIGTERM, SIGINT, SIGHUP and SIGCHLD; `Waker::wait(&self, max: Duration)` returning at once when a registered signal arrives, else after `max`.
 
-- [ ] **Step 1: Add the `poll` feature**
+- [x] **Step 1: Add the `poll` feature**
 
 In `Cargo.toml`, the `nix` line becomes:
 
@@ -2921,7 +2921,7 @@ In `Cargo.toml`, the `nix` line becomes:
   nix         = { version = "0.31.3", features = ["user", "signal", "process", "poll"] }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 In `src/supervisor.rs`'s `tests` module, add:
 
@@ -2944,12 +2944,12 @@ In `src/supervisor.rs`'s `tests` module, add:
   }
 ```
 
-- [ ] **Step 3: Run it to see it fail**
+- [x] **Step 3: Run it to see it fail**
 
 Run: `cargo test waker`
 Expected: compile error, `Waker` not found.
 
-- [ ] **Step 4: Implement the waker and use it in the loop**
+- [x] **Step 4: Implement the waker and use it in the loop**
 
 In the `unix` module of `src/supervisor.rs`, add (imports: `use std::io::{Read as _, Write as _};`,
 `use std::os::fd::AsFd as _;`, `use std::os::unix::net::UnixStream;`):
@@ -3007,7 +3007,7 @@ Then in `run`, replace the flag registration and the sleep:
       waker.wait(until_poll.min(Duration::from_millis(250)));
 ```
 
-- [ ] **Step 5: Run the unit tests, then the existing smoke test**
+- [x] **Step 5: Run the unit tests, then the existing smoke test**
 
 Run: `cargo test && cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 Expected: green on Linux; on Windows the waker test does not exist.
@@ -3016,7 +3016,7 @@ Run: `cargo test --test docker_supervisor -- --ignored --nocapture` on a Docker 
 WireGuard module (CI does this; locally only if Docker Desktop's kernel has it).
 Expected: green; the SIGTERM pass-through and the exit code are the assertions that matter here.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock src/supervisor.rs
@@ -3047,7 +3047,7 @@ alone.
 - Consumes: everything tasks 1 to 10 produced.
 - Produces: `supervisor::Applied { tag: Option<String>, effective: Effective }`; `supervisor::Plan { exe, app_root, poll_secs, ping, scrub: Vec<String>, consent_socket: PathBuf, log: Log, tunnel: Option<TunnelPlan> }`; `supervisor::TunnelPlan { interface: Interface, settings: Settings, fetcher: Option<Fetcher>, applied: Option<Applied>, unconfigured: Reason, endpoint_ok: bool }` (Linux); `bundle::Effective::describe(&self) -> String` and `Effective::diff(&self, new: &Effective) -> String`.
 
-- [ ] **Step 1: The two log helpers on `Effective`, with their test**
+- [x] **Step 1: The two log helpers on `Effective`, with their test**
 
 In `src/bundle.rs` add to the `tests` module:
 
@@ -3117,7 +3117,7 @@ impl Effective {
 
 Run: `cargo test bundle` — passes.
 
-- [ ] **Step 2: Delete the old tunnel code from `wireguard.rs`**
+- [x] **Step 2: Delete the old tunnel code from `wireguard.rs`**
 
 Remove: the `Config` struct and its `impl`; `Action`; `Assessor` and its `impl`; inside the
 `unix` module, the `Tunnel` struct and its `impl` (keep `run`, `IFACE` import, `ApplyError`,
@@ -3128,7 +3128,7 @@ and `stale_resets_the_endpoint_first_then_cycles_the_interface`; keep `REQUIRED`
 the `#![allow(dead_code)]` line from `src/bundle.rs`, `src/health.rs`, `src/cache.rs`,
 `src/logfile.rs`, `src/consent.rs` and `src/fetch.rs`.
 
-- [ ] **Step 3: Replace `src/run.rs`**
+- [x] **Step 3: Replace `src/run.rs`**
 
 Keep the `run_startup_scripts` function and the `tests` module from task 8; replace everything
 above them with:
@@ -3430,7 +3430,7 @@ fn boot_tunnel(app_root: &Path, log: &Log, ping: Option<&Ping>) -> Result<BootTu
 }
 ```
 
-- [ ] **Step 4: Replace `src/supervisor.rs`**
+- [x] **Step 4: Replace `src/supervisor.rs`**
 
 Keep the `Pinger` struct, its `impl` and its test, and the `Waker` from task 10; replace
 everything else:
@@ -3965,7 +3965,7 @@ pub mod unix {
 
 Keep the `tests` module with the `Pinger` test and the waker test from task 10.
 
-- [ ] **Step 5: Build, lint, unit tests**
+- [x] **Step 5: Build, lint, unit tests**
 
 Run: `cargo build && cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test`
 Expected: green. Typical first-build errors and their fixes: a `use` left over from the deleted
@@ -3973,14 +3973,14 @@ Expected: green. Typical first-build errors and their fixes: a `use` left over f
 the `let` chains, which need the 2024 edition the crate already uses. Do not weaken any test to
 get green: the tests are the spec's.
 
-- [ ] **Step 6: The consent socket in the smoke test's report**
+- [x] **Step 6: The consent socket in the smoke test's report**
 
 In `tests/docker_supervisor.rs`, in `SERVE_APP`'s report dict add
 `"consent_socket": os.environ.get("DEVKIT_CONSENT_SOCKET"),` and after the two existing
 `assert_eq!(report["supervised_ping"], "1");` lines add
 `assert_eq!(report["consent_socket"], "/run/devkit/consent.sock");`.
 
-- [ ] **Step 7: The environment-mode smoke test**
+- [x] **Step 7: The environment-mode smoke test**
 
 Run: `cargo test --test docker_supervisor -- --ignored --nocapture` where Docker has the
 WireGuard module (CI does; locally only with a capable Docker Desktop kernel).
@@ -3988,7 +3988,7 @@ Expected: green. What changed underneath it: the boot now waits for the handshak
 app starts (the hub container is up first, so it does), the re-up alternates, and the
 supervisor writes `devkit-container.log`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src tests/docker_supervisor.rs
@@ -4006,7 +4006,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `python/devkit_container/compose.template.yaml`, `python/devkit_container/template.Dockerfile`, `README.md`, `todo.md`, `.github/workflows/ci.yml`
 - Test: `cargo test --test docker_smoke -- --ignored` still passes (the Dockerfile helper in `tests/common/mod.rs` passes the window markers through as plain lines); `bash ci/render.sh` once the aeth-devkit release that knows `!window` exists
 
-- [ ] **Step 1: The compose template (spec 9.2)**
+- [x] **Step 1: The compose template (spec 9.2)**
 
 In `python/devkit_container/compose.template.yaml`, replace the ten lines between
 `# !if keys("tool.docker.wireguard"):` (the environment one, line 33) and its `# !end` with:
@@ -4022,7 +4022,7 @@ In `python/devkit_container/compose.template.yaml`, replace the ten lines betwee
 
 Nothing else in the file changes.
 
-- [ ] **Step 2: The Dockerfile template (spec 9.3)**
+- [x] **Step 2: The Dockerfile template (spec 9.3)**
 
 In `python/devkit_container/template.Dockerfile`, after the last builder-stage `RUN` (the
 `uv sync --frozen --no-dev --no-editable $extras` step) and before `# ---- Final stage ----`,
@@ -4048,7 +4048,7 @@ The `dockerfile()` helper in `tests/common/mod.rs` matches only the one wireguar
 copies every other line, markers included, so it needs no change; Docker reads the markers as
 comments.
 
-- [ ] **Step 3: The README**
+- [x] **Step 3: The README**
 
 In `README.md`:
 
@@ -4189,7 +4189,7 @@ the in-place re-apply without the interface going down, the consent hold and ok 
 and the removal shutdown.
 ```
 
-- [ ] **Step 4: The todo entries of spec 15**
+- [x] **Step 4: The todo entries of spec 15**
 
 Append to `todo.md`:
 
@@ -4202,7 +4202,7 @@ Append to `todo.md`:
 - A data-plane probe (ping the hub's tunnel address each poll) as a second health signal.
 ```
 
-- [ ] **Step 5: CI**
+- [x] **Step 5: CI**
 
 In `.github/workflows/ci.yml`, the container-smoke step becomes:
 
@@ -4221,7 +4221,7 @@ renders through the released devkit, which refuses the `!window` marker as unkno
 aeth-devkit release of spec 14 step 1 is out. That failure is the guard working; it is expected
 until that release, and green after it.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cargo test --test docker_smoke -- --ignored --nocapture` (Docker needed): green, the
 window markers pass through the local gate strip.
@@ -4247,7 +4247,7 @@ itself can only be created in the GitHub UI, so this task stops for the owner at
 - Record: the four key values for task 14, in the scratchpad (never in this repo except as the
   task 14 constants)
 
-- [ ] **Step 1: Generate the two key pairs**
+- [x] **Step 1: Generate the two key pairs**
 
 ```bash
 docker run --rm ghcr.io/astral-sh/uv:python3.14-bookworm-slim sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq wireguard-tools >/dev/null 2>&1 && for n in hub spoke; do k=$(wg genkey); echo "$n private $k"; echo "$n public $(echo "$k" | wg pubkey)"; done'
@@ -4256,7 +4256,7 @@ docker run --rm ghcr.io/astral-sh/uv:python3.14-bookworm-slim sh -c 'apt-get upd
 Expected: four lines. Keep them in a scratch file for task 14; they are test fixtures, not
 secrets, and the spoke's and hub's private keys will be committed as constants there.
 
-- [ ] **Step 2: Create the repository with one commit**
+- [x] **Step 2: Create the repository with one commit**
 
 ```bash
 cd "$SCRATCH" && gh repo create AetherBreaker/wireguard-hub-smoke --private --description "Fixture releases for devkit-container's fetched-mode smoke test" --clone
@@ -4267,7 +4267,7 @@ git add README.md && git commit -m "Fixture repository" && git push -u origin ma
 
 `$SCRATCH` is the session's scratchpad directory.
 
-- [ ] **Step 3: The three releases**
+- [x] **Step 3: The three releases**
 
 With `HUB_PUB` and `SPOKE_PUB` from step 1, in the cloned fixture repository:
 
@@ -4289,14 +4289,14 @@ Expected: three releases listed, each with a `peers.toml` asset. The keepalive o
 fixture's, for the test's short timings; the hub endpoint `wireguard-hub:51820` is the network
 alias the test gives its hub container.
 
-- [ ] **Step 4: Validate the three files with the binary's parser**
+- [x] **Step 4: Validate the three files with the binary's parser**
 
 Run, from this repository: `cargo test bundle` already covers the format; additionally check
 each fixture parses by running the spoke's own validation on it once task 14's test runs.
 Nothing to do here beyond eyeballing the three files: `schema`, `hub_version` equal to the tag,
 the hub key, the spoke key and address.
 
-- [ ] **Step 5: The token (owner's step)**
+- [x] **Step 5: The token (owner's step)**
 
 Stop and ask the owner to create the token at
 https://github.com/settings/personal-access-tokens/new with: resource owner `AetherBreaker`,
@@ -4329,13 +4329,13 @@ No commit: this task changes nothing in this repository.
 
 - Consumes: the four key values of task 13; `common::{build_image, docker, ok, text, Cleanup, root}`.
 
-- [ ] **Step 1: Share `wg_key`**
+- [x] **Step 1: Share `wg_key`**
 
 Move `fn wg_key(image: &str) -> (String, String)` from `tests/docker_supervisor.rs` into
 `tests/common/mod.rs` as `pub fn wg_key`, unchanged; the supervisor test keeps calling it
 through `use common::*;`.
 
-- [ ] **Step 2: Write the test**
+- [x] **Step 2: Write the test**
 
 Create `tests/docker_fetched.rs`, filling the four constants from task 13:
 
@@ -4684,7 +4684,7 @@ fn fetched_mode_boots_from_the_hub_release_re_applies_in_place_asks_before_givin
 }
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 Run, with the token in the environment: `cargo test --test docker_fetched -- --ignored --nocapture`
 Expected: green in roughly ten minutes; the stale window (up to 150 s) and the two 60 s ask
@@ -4692,7 +4692,7 @@ intervals are most of it. The test's assertions map one to one onto the smoke li
 If the local Docker kernel lacks the WireGuard module, push the branch and read the CI run
 instead; the task is not done until that run is green.
 
-- [ ] **Step 4: Lint and commit**
+- [x] **Step 4: Lint and commit**
 
 Run: `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
 
@@ -4709,25 +4709,25 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:** none new.
 
-- [ ] **Step 1: Everything on Windows**
+- [x] **Step 1: Everything on Windows**
 
 Run: `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test`
 Expected: green. The Linux-only modules are absent here; what runs is the bundle, health, cache,
 log file, planner, settings and pyproject tests, plus the query subcommands.
 
-- [ ] **Step 2: Everything on Linux (CI)**
+- [x] **Step 2: Everything on Linux (CI)**
 
 Push the branch and read the CI run: the Rust job on both runners, the wheel job, the smoke job
 (three test binaries), and the render job. The render job fails with `unknown marker` until the
 aeth-devkit release of spec 14 step 1 is out; every other job must be green.
 
-- [ ] **Step 3: The spec's done list**
+- [x] **Step 3: The spec's done list**
 
 Check against the spec's section 13, one line each: the unit list, the render note, the smoke
 list, and confirm nothing in sections 5 to 9 lacks a test or a smoke assertion. Then the plan's
 own checklist: every task's boxes ticked.
 
-- [ ] **Step 4: Hand back**
+- [x] **Step 4: Hand back**
 
 Report to the owner: the branch, what CI says, and the two items outside this repository that
 gate a release: the aeth-devkit release (kept jobs and windows) and the fixture token being in
