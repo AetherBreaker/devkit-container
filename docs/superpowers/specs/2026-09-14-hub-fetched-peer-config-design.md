@@ -1130,6 +1130,15 @@ reason (section 2). Left in step 4: the hub redeployed at v1.1.0 so its interfac
 tunnel-probe deployed in Coolify with the three variables of 10.1 (no token while the hub is
 public), then ScheduledReportAggregator and the office PC.
 
+Status, 2026-09-15, later still: ScheduledReportAggregator is migrated per 10.1 and released as
+3.1.0 on devkit-container 2.1.1 (compose pinned; the nine environment-mode lines removed), and
+enrolled in wireguard-hub 1.2.0 at 10.8.0.20 with the public key derived from the private key
+its checkout's `.env` holds; the hub's compose is pinned to v1.2.0. tunnel-probe is pinned to
+devkit-container 2.1.1 without a new release, since 2.1.1 changed only the template and its
+compose line already matched. Left in step 4: the hub redeployed at v1.2.0, both spokes deployed
+with the three variables (ScheduledReportAggregator's Coolify environment loses the nine old
+values and its `WG_PRIVATE_KEY` must be the key whose public key is enrolled), and the office PC.
+
 ## 15. TODO entries to record in this repo at implementation
 
 - A per-project `docker/wireguard/wg0.conf` as a third configuration source, for projects without
