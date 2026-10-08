@@ -549,7 +549,19 @@ pub mod unix {
         }
       }
     }
-    let child = cmd.spawn().with_context(|| format!("spawning {}", exe.display()))?;
+    let child = match cmd.spawn() {
+      Ok(c) => c,
+      Err(e) => {
+        let err = anyhow::Error::new(e).context(format!("spawning {}", exe.display()));
+        let started: Vec<(Pid, Signal)> = daemon_pids.iter().map(|&p| (p, Signal::SIGTERM)).collect();
+        stop(&mut live, &started, &waker);
+        if let Some(ts) = &tunnel {
+          ts.plan.interface.down();
+        }
+        send_now(&mut inflight, &format!("{err:#}"));
+        return Err(err);
+      }
+    };
     let child_pid = Pid::from_raw(child.id() as i32);
     live.push(child_pid);
     log.line(&format!("supervising pid {child_pid}"));
@@ -600,8 +612,13 @@ pub mod unix {
         }
       }
       if let Some(code) = app_exit {
-        exit_code = code;
-        break;
+        if exit.is_none() {
+          exit_code = code;
+          break;
+        }
+        // A daemon died in the same reap: its exit path wins, so the death is never masked by
+        // an app exiting 0.
+        log.line(&format!("app exited with {code}"));
       }
       if exit.is_none()
         && let Some(ts) = &mut tunnel
