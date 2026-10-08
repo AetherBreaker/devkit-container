@@ -25,3 +25,19 @@
   honest and no credential in the build), or feed the clone a token through a BuildKit secret
   mount (never a plain `ARG`: Coolify passes every environment variable as a build arg, and an
   `ARG` value lands in the image history).
+- Widen what `run` accepts as the app and as startup scripts, so a maturin `bin` project fits.
+  maturin refuses `[project.scripts]` in a `bin` project ("Defining scripts and working with a
+  binary doesn't mix well"), yet `run` finds both the `run-app-*` script and every
+  `startup_scripts` name only through `[project.scripts]` (`pyproject.rs`). Fallbacks: exactly one
+  `run-app-*` executable in `.venv/bin` (e.g. a Rust shim that execs `python -m <app>`; maturin
+  ships a `python-source` package beside the binaries), and startup entries that name a
+  `.venv/bin` executable or a module run with `python -m`. Typo detection then moves from the
+  pyproject read to a filesystem check at `run`. Raised by pos-tunnel's relay, which wanted Rust
+  one-shot tools beside a Python app (2026-10-08).
+- Consider building the image from the application's released wheel instead of its git-tagged
+  source. The builder's `uv sync --no-editable` builds the project from source, so a project with
+  Rust in it (maturin or setuptools-rust) can't build: `uv:python3.14-bookworm-slim` has no Rust
+  toolchain, and the window comes after that sync. Likely shape: sync dependencies only from the
+  tagged `pyproject.toml`/`uv.lock`, then install the project's prebuilt manylinux wheel for
+  `GIT_TAG` (from SFTPyPI, or the GitHub release, which the devkit release workflow already
+  attaches it to). Same origin (2026-10-08).
