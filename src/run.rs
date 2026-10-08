@@ -1,6 +1,6 @@
 //! The container entrypoint (Linux only): the shell script's job in the order of spec 7, the
 //! tunnel's boot (5.2 steps 1 to 5) before any file is touched, then one branch: exec the app
-//! (the default) or spawn and supervise it (`supervise` / `wireguard`).
+//! (the default) or spawn and supervise it (`supervise` / `wireguard` / `daemons`).
 
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
@@ -35,8 +35,9 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   let startup = pyproject::startup_scripts(&doc)?;
   let scrub = pyproject::scrub_env(&doc)?;
   let entries = pyproject::required_persisted_dirs(&doc)?;
+  let daemons = pyproject::daemons(&doc)?;
   let wireguard = pyproject::wireguard(&doc)?;
-  let supervise = wireguard || pyproject::supervise(&doc)?;
+  let supervise = wireguard || !daemons.commands.is_empty() || pyproject::supervise(&doc)?;
   let mountinfo = std::fs::read_to_string(&args.mountinfo).with_context(|| format!("reading {}", args.mountinfo.display()))?;
   let missing = mounts::unbacked(&mounts::parse_mountinfo(&mountinfo), &args.app_root, &entries);
   if !missing.is_empty() {
@@ -132,6 +133,7 @@ pub fn run(args: &RunArgs) -> Result<u8> {
       consent_socket: PathBuf::from(consent::SOCKET),
       log,
       tunnel: tunnel.map(|t| t.plan),
+      daemons,
     });
   }
   // Drop privileges, then replace this process with the app. Order matters: once the uid is

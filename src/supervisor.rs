@@ -1,5 +1,5 @@
-//! The supervising entrypoint: the app spawned as 999 with nothing kept, signals forwarded,
-//! zombies reaped, and every `WG_POLL_SECS` the tunnel assessed (spec 5.3), repaired (5.6) or
+//! The supervising entrypoint: the daemons spawned as root, the app as 999 with nothing kept,
+//! signals forwarded, zombies reaped, any daemon's exit ending the run, and every `WG_POLL_SECS` the tunnel assessed (spec 5.3), repaired (5.6) or
 //! re-applied (5.5), its heartbeat written, every heartbeat file adjudicated and the ping sent.
 //! Fetches and consent asks run on worker threads; the loop only ever waits on its waker.
 
@@ -50,6 +50,7 @@ pub struct Plan {
   pub log: Log,
   #[cfg(unix)]
   pub tunnel: Option<TunnelPlan>,
+  pub daemons: crate::pyproject::Daemons,
 }
 
 /// The tunnel as the boot left it (spec 5.2), handed to the loop.
@@ -152,8 +153,11 @@ pub mod unix {
     Ok(())
   }
 
-  /// Why the loop ends the run before the app did, and how the app is stopped first.
+  /// Why the loop ends the run before the app did, and how the app is stopped first. Each
+  /// stops the daemons with the app, in the order `stop_daemons_after_app` picks.
   enum Exit {
+    /// A daemon exited, whatever its status: SIGTERM, then down, /fail, exit 1.
+    Daemon(String),
     /// A local command failed (5.3): SIGTERM, then down, /fail, exit 1.
     Broken(anyhow::Error),
     /// The consent path ran out (6.3): SIGINT, then down, /fail, exit 75.
@@ -384,40 +388,52 @@ pub mod unix {
     }
   }
 
-  /// Reap every finished child (orphans adopted as PID 1 included); the app's exit code once
-  /// it has ended (signal death as 128+n).
-  fn reap(child: Pid) -> Option<u8> {
-    let mut app_exit = None;
+  /// Reap every finished child (orphans adopted as PID 1 included); each one in `live` that
+  /// ended leaves it and is returned with its exit code (signal death as 128+n).
+  fn reap(live: &mut Vec<Pid>) -> Vec<(Pid, u8)> {
+    let mut ended = Vec::new();
     loop {
-      match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
-        Ok(WaitStatus::Exited(pid, code)) if pid == child => app_exit = Some(code as u8),
-        Ok(WaitStatus::Signaled(pid, sig, _)) if pid == child => app_exit = Some(128u8.wrapping_add(sig as i32 as u8)),
+      let (pid, code) = match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+        Ok(WaitStatus::Exited(pid, code)) => (pid, code as u8),
+        Ok(WaitStatus::Signaled(pid, sig, _)) => (pid, 128u8.wrapping_add(sig as i32 as u8)),
         Ok(WaitStatus::StillAlive) | Err(_) => break,
-        Ok(_) => {}
+        Ok(_) => continue,
+      };
+      if let Some(i) = live.iter().position(|p| *p == pid) {
+        live.swap_remove(i);
+        ended.push((pid, code));
       }
     }
-    app_exit
+    ended
   }
 
-  /// Signal the app and give it 30 s to exit before SIGKILL (5.3, 5.5, 6.3); reaped either way.
-  fn stop_app(child: Pid, sig: Signal, waker: &Waker) {
-    let _ = kill(child, sig);
+  /// Signal each of `targets` still in `live` and give them 30 s to exit before SIGKILL (5.3,
+  /// 5.5, 6.3); reaped either way.
+  fn stop(live: &mut Vec<Pid>, targets: &[(Pid, Signal)], waker: &Waker) {
+    for &(pid, sig) in targets.iter().filter(|(p, _)| live.contains(p)) {
+      let _ = kill(pid, sig);
+    }
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-      if reap(child).is_some() {
+      reap(live);
+      let left: Vec<Pid> = targets.iter().map(|t| t.0).filter(|p| live.contains(p)).collect();
+      if left.is_empty() {
         return;
       }
       if Instant::now() >= deadline {
-        let _ = kill(child, Signal::SIGKILL);
-        let _ = waitpid(child, None);
+        for pid in left {
+          let _ = kill(pid, Signal::SIGKILL);
+          let _ = waitpid(pid, None);
+          live.retain(|p| *p != pid);
+        }
         return;
       }
       waker.wait(Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())));
     }
   }
 
-  /// Supervise `plan.exe` until it exits; returns the code to exit with. Never returns while
-  /// the child runs, except through the three shutdown paths, which stop it first.
+  /// Supervise `plan.exe` and the daemons until one exits; returns the code to exit with. Never
+  /// returns while any runs, except through the shutdown paths, which stop them first.
   pub fn run(plan: Plan) -> Result<u8> {
     let Plan {
       exe,
@@ -428,13 +444,16 @@ pub mod unix {
       consent_socket,
       log,
       tunnel,
+      daemons,
     } = plan;
     let root = getuid().is_root();
-    // Without a tunnel nothing later needs root: drop now, and the child inherits 999.
-    if tunnel.is_none() && root {
+    // Only the tunnel and the daemons (root, so only root can signal them) need root later;
+    // without either drop now, and the child inherits 999.
+    let keep_root = tunnel.is_some() || !daemons.commands.is_empty();
+    if !keep_root && root {
       drop_privileges()?;
     }
-    let spawner_is_root = tunnel.is_some() && root;
+    let spawner_is_root = keep_root && root;
 
     let term = Arc::new(AtomicBool::new(false));
     let int = Arc::new(AtomicBool::new(false));
@@ -462,9 +481,6 @@ pub mod unix {
         cmd.pre_exec(|| drop_privileges().map_err(|e| std::io::Error::other(e.to_string())));
       }
     }
-    let child = cmd.spawn().with_context(|| format!("spawning {}", exe.display()))?;
-    let child_pid = Pid::from_raw(child.id() as i32);
-    log.line(&format!("supervising pid {child_pid}"));
 
     let logs = heartbeat::logs_dir(&app_root);
     let app_beat = logs.join(heartbeat::APP_FILE);
@@ -503,18 +519,92 @@ pub mod unix {
       }
     };
 
+    // The daemons before the app, as root with the app's environment. One that cannot start
+    // ends the run as an exit would; the app never starts.
+    let names: Vec<String> = daemons.commands.iter().map(|argv| format!("{:?}", argv.join(" "))).collect();
+    let mut daemon_pids: Vec<Pid> = Vec::new();
+    // The app and the daemons not yet reaped.
+    let mut live: Vec<Pid> = Vec::new();
+    for (argv, name) in daemons.commands.iter().zip(&names) {
+      let mut d = Command::new(&argv[0]);
+      d.args(&argv[1..]);
+      for var in SECRET_VARS.iter().copied().chain(scrub.iter().map(String::as_str)) {
+        d.env_remove(var);
+      }
+      match d.spawn() {
+        Ok(c) => {
+          daemon_pids.push(Pid::from_raw(c.id() as i32));
+          live.push(Pid::from_raw(c.id() as i32));
+        }
+        Err(e) => {
+          let msg = format!("daemon {name} could not start: {e}");
+          log.line(&msg);
+          let started: Vec<(Pid, Signal)> = daemon_pids.iter().map(|&p| (p, Signal::SIGTERM)).collect();
+          stop(&mut live, &started, &waker);
+          if let Some(ts) = &tunnel {
+            ts.plan.interface.down();
+          }
+          send_now(&mut inflight, &msg);
+          return Ok(1);
+        }
+      }
+    }
+    let child = cmd.spawn().with_context(|| format!("spawning {}", exe.display()))?;
+    let child_pid = Pid::from_raw(child.id() as i32);
+    live.push(child_pid);
+    log.line(&format!("supervising pid {child_pid}"));
+    // Every shutdown path: the app with `sig` and the daemons with SIGTERM, all at once or,
+    // with `stop_daemons_after_app`, the daemons once the app has gone.
+    let stop_all = |live: &mut Vec<Pid>, sig: Signal| {
+      let app = [(child_pid, sig)];
+      let rest = daemon_pids.iter().map(|&p| (p, Signal::SIGTERM));
+      if daemons.after_app {
+        stop(live, &app, &waker);
+        stop(live, &rest.collect::<Vec<_>>(), &waker);
+      } else {
+        stop(live, &app.into_iter().chain(rest).collect::<Vec<_>>(), &waker);
+      }
+    };
+    // Set by a forwarded SIGTERM or SIGINT: a daemon exiting after it is no failure.
+    let mut stopping = false;
+
     loop {
       for (flag, sig) in [(&term, Signal::SIGTERM), (&int, Signal::SIGINT), (&hup, Signal::SIGHUP)] {
         if flag.swap(false, Ordering::SeqCst) {
           let _ = kill(child_pid, sig);
+          let stop_request = sig != Signal::SIGHUP;
+          stopping |= stop_request;
+          // With `stop_daemons_after_app` a stop reaches the daemons only once the app has exited.
+          if !(stop_request && daemons.after_app) {
+            for &pid in daemon_pids.iter().filter(|p| live.contains(p)) {
+              let _ = kill(pid, sig);
+            }
+          }
         }
       }
-      if let Some(code) = reap(child_pid) {
+      let mut exit: Option<Exit> = None;
+      let mut app_exit = None;
+      for (pid, code) in reap(&mut live) {
+        if pid == child_pid {
+          app_exit = Some(code);
+          continue;
+        }
+        let i = daemon_pids
+          .iter()
+          .position(|&p| p == pid)
+          .expect("live holds the app and the daemons");
+        let msg = format!("daemon {} exited with {code}", names[i]);
+        log.line(&msg);
+        if !stopping && exit.is_none() {
+          exit = Some(Exit::Daemon(msg));
+        }
+      }
+      if let Some(code) = app_exit {
         exit_code = code;
         break;
       }
-      let mut exit: Option<Exit> = None;
-      if let Some(ts) = &mut tunnel
+      if exit.is_none()
+        && let Some(ts) = &mut tunnel
         && let Err(e) = ts.collect(&log, &app_root)
       {
         exit = Some(e);
@@ -546,12 +636,23 @@ pub mod unix {
         }
       }
       if let Some(exit) = exit {
-        let ts = tunnel.as_ref().expect("an exit comes from the tunnel");
+        let down = || {
+          if let Some(ts) = &tunnel {
+            ts.plan.interface.down();
+          }
+        };
         match exit {
+          // Its line is already logged.
+          Exit::Daemon(msg) => {
+            stop_all(&mut live, Signal::SIGTERM);
+            down();
+            send_now(&mut inflight, &msg);
+            return Ok(1);
+          }
           Exit::Broken(err) => {
             log.line(&format!("broken: {err:#}; stopping the app"));
-            stop_app(child_pid, Signal::SIGTERM, &waker);
-            ts.plan.interface.down();
+            stop_all(&mut live, Signal::SIGTERM);
+            down();
             send_now(&mut inflight, &format!("{err:#}"));
             return Err(err);
           }
@@ -565,8 +666,8 @@ pub mod unix {
               log.line("WG_HOLD_LIMIT_SECS reached; proceeding without asking again");
             }
             log.line(&format!("{msg}; SIGINT to the app"));
-            stop_app(child_pid, Signal::SIGINT, &waker);
-            ts.plan.interface.down();
+            stop_all(&mut live, Signal::SIGINT);
+            down();
             send_now(&mut inflight, &msg);
             return Ok(75);
           }
@@ -574,8 +675,8 @@ pub mod unix {
             let msg = format!("removed from the hub's peer table in {tag}");
             log.line(&format!("{msg}; SIGINT to the app"));
             send_now(&mut inflight, &msg);
-            stop_app(child_pid, Signal::SIGINT, &waker);
-            ts.plan.interface.down();
+            stop_all(&mut live, Signal::SIGINT);
+            down();
             return Ok(75);
           }
         }
@@ -584,11 +685,15 @@ pub mod unix {
       waker.wait(until_poll.min(Duration::from_millis(250)));
     }
 
+    if exit_code != 0 {
+      log.line(&format!("app exited with {exit_code}"));
+    }
+    // The app has gone; this stops what is left of the daemons.
+    stop_all(&mut live, Signal::SIGTERM);
     if let Some(ts) = &tunnel {
       ts.plan.interface.down();
     }
     if exit_code != 0 {
-      log.line(&format!("app exited with {exit_code}"));
       // Synchronous like the other exit paths: `send` would skip it behind an in-flight ping.
       send_now(&mut inflight, &format!("exit code {exit_code}"));
     }
