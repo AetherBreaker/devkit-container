@@ -41,3 +41,15 @@
   tagged `pyproject.toml`/`uv.lock`, then install the project's prebuilt manylinux wheel for
   `GIT_TAG` (from SFTPyPI, or the GitHub release, which the devkit release workflow already
   attaches it to). Same origin (2026-10-08).
+- Supervise extra long-running processes beside the app. Startup scripts must exit, so a root
+  daemon the app depends on (pos-tunnel's relay: `sshd`, `cron`) can only be backgrounded by one,
+  and nothing notices it dying. Shape: a `[tool.docker]` list of commands the supervisor starts
+  (as root, before the privilege drop) and watches; one exiting ends the run like the app
+  exiting. The relay works around it for now by having its app check the daemons' pids and exit
+  (2026-10-08).
+- Restart on unhealthy, opt-in. A stale app heartbeat today only logs `unhealthy:` and sends
+  `/fail` (`supervisor.rs`); the app keeps running, frozen, until someone restarts the
+  container. Shape: a `[tool.docker]` switch that stops the app (`stop_app`: SIGTERM, grace,
+  SIGKILL) and exits non-zero, so the restart policy brings it back; plus a setting for the app's
+  max heartbeat age, hardcoded at 180 s (`heartbeat.rs`). Raised by pos-tunnel's relay
+  (2026-10-08).
