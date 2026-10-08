@@ -150,6 +150,43 @@ pub fn scrub_env(doc: &DocumentMut) -> Result<Vec<String>> {
   string_list(doc, "scrub_env")
 }
 
+/// `[tool.docker].daemons` and `stop_daemons_after_app`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Daemons {
+  /// Each a program (a path, or a name found on PATH) and its arguments; any implies `supervise`.
+  pub commands: Vec<Vec<String>>,
+  /// Stop the app first and the daemons once it has exited, Docker's stop included; otherwise
+  /// all at once.
+  pub after_app: bool,
+}
+
+/// The daemons started as root after the startup scripts and supervised beside the app. Only
+/// the shape is checked here; a program that cannot be started ends the run when spawned.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub fn daemons(doc: &DocumentMut) -> Result<Daemons> {
+  let after_app = docker_flag(doc, "stop_daemons_after_app")?;
+  let mut commands = Vec::new();
+  if let Some(item) = doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get("daemons")) {
+    let shape = || {
+      format!(
+        "[tool.docker].daemons must be a list of commands, each a non-empty list of strings, got {}",
+        item.to_string().trim()
+      )
+    };
+    for cmd in item.as_array().with_context(shape)? {
+      let argv: Option<Vec<String>> = cmd
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .and_then(|a| a.iter().map(|v| v.as_str().map(str::to_string)).collect());
+      commands.push(argv.with_context(shape)?);
+    }
+  }
+  if after_app && commands.is_empty() {
+    bail!("[tool.docker].stop_daemons_after_app is set without any daemons");
+  }
+  Ok(Daemons { commands, after_app })
+}
+
 #[cfg_attr(not(unix), allow(dead_code))]
 fn string_list(doc: &DocumentMut, key: &str) -> Result<Vec<String>> {
   let Some(item) = doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) else {
@@ -273,5 +310,32 @@ scrub_env = [\"WG_HUB_PRIVATE_KEY\", \"OTHER\"]
     assert!(scrub_env(&bad).unwrap_err().to_string().contains("list of strings"));
     let bad = doc("[tool.docker]\nstartup_scripts = [1]\n");
     assert!(startup_scripts(&bad).unwrap_err().to_string().contains("list of strings"));
+  }
+
+  #[test]
+  fn daemons_are_argv_lists_and_the_order_switch_needs_one() {
+    let d = doc("[tool.docker]\ndaemons = [[\"/usr/sbin/sshd\", \"-D\"], [\"relay-killer\", \"--loop\"]]\n");
+    assert_eq!(
+      daemons(&d).unwrap(),
+      Daemons {
+        commands: vec![vec!["/usr/sbin/sshd".into(), "-D".into()], vec!["relay-killer".into(), "--loop".into()]],
+        after_app: false,
+      }
+    );
+    assert_eq!(daemons(&doc("[project]\n")).unwrap(), Daemons::default());
+    let d = doc("[tool.docker]\ndaemons = [[\"sshd\"]]\nstop_daemons_after_app = true\n");
+    assert!(daemons(&d).unwrap().after_app);
+    for bad in ["\"sshd\"", "[\"sshd\"]", "[[]]", "[[\"sshd\", 1]]"] {
+      let err = daemons(&doc(&format!("[tool.docker]\ndaemons = {bad}\n"))).unwrap_err().to_string();
+      assert!(err.contains("[tool.docker].daemons must be a list of commands"), "{bad}: {err}");
+    }
+    for bad in ["stop_daemons_after_app = true\n", "daemons = []\nstop_daemons_after_app = true\n"] {
+      let err = daemons(&doc(&format!("[tool.docker]\n{bad}"))).unwrap_err().to_string();
+      assert!(err.contains("without any daemons"), "{bad}: {err}");
+    }
+    let err = daemons(&doc("[tool.docker]\ndaemons = [[\"sshd\"]]\nstop_daemons_after_app = \"yes\"\n"))
+      .unwrap_err()
+      .to_string();
+    assert!(err.contains("must be true or false"), "{err}");
   }
 }
