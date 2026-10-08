@@ -38,17 +38,30 @@ itself.
   are errors; a table still carrying `chown_paths`/`mkdirs` is refused with the migration hint.
   Flags `--pyproject`, `--app-root`, `--mountinfo` exist for tests.
 
-  With `[tool.docker].supervise` or `wireguard` on, the last step is a branch instead of the
+  With `[tool.docker].supervise`, `wireguard` or `daemons` on, the last step is a branch instead of the
   exec: the app is spawned as 999:999 with empty supplementary groups and empty capability sets,
   with `DEVKIT_CONSENT_SOCKET=/run/devkit/consent.sock` (the directory created `0700`, owned
   `999:999`) and, when the supervisor owns the ping, `DEVKIT_SUPERVISED_PING=1`; the supervisor
   stays PID 1. It reaps zombies, forwards `SIGTERM`, `SIGINT` and `SIGHUP` to the child at once
   (its loop wakes on a signal or the child's exit, and otherwise every 250 ms), and exits with
-  the child's code (signal death as 128+n). Without a tunnel it drops to 999 itself before
-  spawning, so no root process lingers. Every line it writes for itself also goes, timestamped,
+  the child's code (signal death as 128+n). Without a tunnel or daemons it drops to 999 itself
+  before spawning, so no root process lingers. Every line it writes for itself also goes, timestamped,
   to `/app/persisted_data/logs/devkit-container.log`, an append-only placeholder until the
   binary logs through aeth_ext. A leftover `wireguard-heartbeat.txt` is removed at start when
   the mode is off.
+
+  With `daemons`, each command is started before the app, in order, as root, with the app's
+  environment (the built-in secrets and `scrub_env` removed) and its stdio; nothing waits for
+  them to be ready. Any daemon exiting, whatever its status, ends the run: the line
+  `daemon "<command>" exited with <code>`, the app and the other daemons stopped, `wg0` down,
+  `/fail` with that line, exit 1, and no consent ask. One that cannot be started ends the run
+  the same way (`could not start`) before the app is spawned. The app exiting stops the
+  daemons. `SIGTERM`, `SIGINT` and `SIGHUP` are forwarded to them as well, and a daemon exiting
+  after a forwarded `SIGTERM` or `SIGINT` is no failure. Every stop gives the daemons `SIGTERM`
+  and the same 30 s before `SIGKILL` as the app, at the same time as the app; with
+  `stop_daemons_after_app` only once the app has exited, and Docker's stop then reaches them
+  only after the app too, so a slow app needs a `stop_grace_period` covering both (Docker's
+  default is 10 s). The supervisor stays root so it can signal them; the app is still 999.
 
   With `wireguard` on, the tunnel boots before `prepare`, in fetched mode (`WG_HUB_URL` set) or
   environment mode (the `WG_*` peer variables): `wg` and `ip` on PATH (else refused: the image
@@ -106,6 +119,8 @@ itself.
 | `wireguard` | `run` brings up the tunnel before the app and keeps it up; implies `supervise`; also gates the compose and Dockerfile templates |
 | `startup_scripts` | console script names from `[project.scripts]` that `run` executes as root, in order, before the app; default empty |
 | `scrub_env` | variable names removed from the app's environment on top of the built-in secrets; default empty |
+| `daemons` | commands, each a list of the program (a path, or a name found on `PATH`) and its arguments, that `run` starts as root after the startup scripts and supervises beside the app; implies `supervise`; default empty |
+| `stop_daemons_after_app` | stop the app first and the daemons only once it has exited, Docker's stop included; refused without `daemons`; off by default |
 
 `chown_paths` and `mkdirs` are legacy keys the entrypoint refuses.
 
@@ -171,7 +186,10 @@ read-only, the persisted dirs created, owned and writable, the venv, the `app` e
 wheel install; a run without the volume or as non-root is refused first; then `healthcheck` in
 the image against the fresh file and a stale one. `docker_supervisor` builds the image with the
 mode on and runs it three ways: supervised without a tunnel (parent PID 1, uid 999, empty
-capabilities, `SIGTERM` and the exit code passed through), with the tunnel against a hub
+capabilities, `SIGTERM` and the exit code passed through), with daemons (root beside a 999
+app; one exiting, or one that cannot start, ends the run with exit 1, its line and `/fail`;
+Docker's stop is no daemon failure, and with `stop_daemons_after_app` reaches the daemon only
+after the app has exited), with the tunnel against a hub
 container built from the same image (handshake, the tunnel heartbeat fresh and readable, the
 secrets scrubbed, stale then re-upped when the hub forgets and re-learns the peer, the
 two-file healthcheck naming the file), and the ping against a local HTTP listener (`/start` once,
