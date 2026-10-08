@@ -242,7 +242,7 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   for cap in ["cap_eff", "cap_prm", "cap_amb"] {
     assert_eq!(report[cap], "0000000000000000", "{cap}");
   }
-  let top = text(&ok(&mut docker(&["top", &dies, "-o", "uid,comm"])));
+  let top = text(&ok(&mut docker(&["top", &dies, "-o", "uid,pid,comm"])));
   let root_runs = |comm: &str| top.lines().any(|l| l.trim_start().starts_with("0 ") && l.contains(comm));
   assert!(root_runs("devkit-contain") && root_runs("sleep"), "{top}");
   assert_eq!(text(&ok(&mut docker(&["wait", &dies]))).trim(), "1");
