@@ -318,7 +318,10 @@ scrub_env = [\"WG_HUB_PRIVATE_KEY\", \"OTHER\"]
     assert_eq!(
       daemons(&d).unwrap(),
       Daemons {
-        commands: vec![vec!["/usr/sbin/sshd".into(), "-D".into()], vec!["relay-killer".into(), "--loop".into()]],
+        commands: vec![
+          vec!["/usr/sbin/sshd".into(), "-D".into()],
+          vec!["relay-killer".into(), "--loop".into()]
+        ],
         after_app: false,
       }
     );

@@ -120,6 +120,27 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   build_image(work.path(), &root, SERVE_APP, "wireguard = true\n", true, &image);
   ok(&mut docker(&["network", "create", &net]));
   let mount = format!("{}:/app/persisted_data", guard.volume);
+  // --- the ping listener: python's http.server as 999; its access log is the assertion.
+  let hc = format!("hc-{id}");
+  guard.containers.push(hc.clone());
+  ok(&mut docker(&[
+    "run",
+    "-d",
+    "--name",
+    &hc,
+    "--network",
+    &net,
+    "--user",
+    "999:999",
+    "--entrypoint",
+    "/app/.venv/bin/python",
+    &image,
+    "-m",
+    "http.server",
+    "8080",
+    "--bind",
+    "0.0.0.0",
+  ]));
 
   // --- supervise without a tunnel: the same image, the switch swapped in a copy of pyproject.
   let app = format!("app-{id}");
@@ -175,6 +196,95 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
   ok(&mut docker(&["rm", "-f", &app]));
   ok(&mut docker(&["volume", "rm", "-f", &guard.volume]));
 
+  // --- daemons, without a tunnel: the wireguard line deleted (daemons imply supervise), then
+  // $DAEMONS and $AFTER appended to [tool.docker]. Each case gets a fresh volume.
+  let with_daemons = |name: &str, daemons: &str, after: &str, env: &[&str]| {
+    let mut cmd = docker(&["run", "-d", "--name", name, "--network", &net, "-v", &mount]);
+    cmd.args(["-e", &format!("DAEMONS={daemons}"), "-e", &format!("AFTER={after}")]);
+    for e in env {
+      cmd.args(["-e", e]);
+    }
+    ok(cmd.args([
+      "--entrypoint",
+      "sh",
+      &image,
+      "-c",
+      r#"sed '/^wireguard = true/d' /app/pyproject.toml > /tmp/p.toml && printf '%s\n%s\n' "$DAEMONS" "$AFTER" >> /tmp/p.toml && exec /app/.venv/bin/devkit-container run --pyproject /tmp/p.toml"#,
+    ]));
+  };
+  let report_of = |name: &str| -> serde_json::Value {
+    wait_for("the app's report", Duration::from_secs(30), &[name], || {
+      exec(name, &["cat", "/app/persisted_data/report.json"]).status.success()
+    });
+    serde_json::from_slice(&exec(name, &["cat", "/app/persisted_data/report.json"]).stdout).unwrap()
+  };
+  let volume = guard.volume.clone();
+  let finish = |name: &str| {
+    ok(&mut docker(&["rm", "-f", name]));
+    ok(&mut docker(&["volume", "rm", "-f", &volume]));
+  };
+
+  // A daemon exiting ends the run: exit 1, the line naming it, /fail. The supervisor and the
+  // daemons are root, the app still 999 with nothing kept.
+  let dies = format!("daemon-dies-{id}");
+  guard.containers.push(dies.clone());
+  with_daemons(
+    &dies,
+    r#"daemons = [["sleep", "infinity"], ["sh", "-c", "sleep 15; exit 5"]]"#,
+    "",
+    &[
+      "SMOKE_EXIT_ON_TERM=7",
+      &format!("ALERTS_HEALTHCHECK_PING_URL=http://{hc}:8080/ping/d"),
+    ],
+  );
+  let report = report_of(&dies);
+  assert_eq!(report["uid"], 999);
+  for cap in ["cap_eff", "cap_prm", "cap_amb"] {
+    assert_eq!(report[cap], "0000000000000000", "{cap}");
+  }
+  let top = text(&ok(&mut docker(&["top", &dies, "-o", "uid,comm"])));
+  let root_runs = |comm: &str| top.lines().any(|l| l.trim_start().starts_with("0 ") && l.contains(comm));
+  assert!(root_runs("devkit-contain") && root_runs("sleep"), "{top}");
+  assert_eq!(text(&ok(&mut docker(&["wait", &dies]))).trim(), "1");
+  let log = logs(&dies);
+  assert!(log.contains(r#"daemon "sh -c sleep 15; exit 5" exited with 5"#), "{log}");
+  wait_for("/fail for the daemon", Duration::from_secs(15), &[&dies, &hc], || {
+    logs(&hc).contains("/ping/d/fail")
+  });
+  finish(&dies);
+
+  // A daemon that cannot start ends the run the same way, before the app starts.
+  let missing = format!("daemon-missing-{id}");
+  guard.containers.push(missing.clone());
+  with_daemons(&missing, r#"daemons = [["sleep", "infinity"], ["/nonexistent"]]"#, "", &[]);
+  assert_eq!(text(&ok(&mut docker(&["wait", &missing]))).trim(), "1");
+  let log = logs(&missing);
+  assert!(
+    log.contains(r#"daemon "/nonexistent" could not start"#) && !log.contains("supervising pid"),
+    "{log}"
+  );
+  finish(&missing);
+
+  // Docker's stop: a daemon exiting on it is no failure, the app's code passes through. By
+  // default the daemons get the signal with the app; with stop_daemons_after_app only once the
+  // app has exited.
+  let trap = r#"daemons = [["sh", "-c", "trap 'echo daemon stopped >&2; exit 0' TERM; while :; do sleep 1; done"]]"#;
+  for after in ["", "stop_daemons_after_app = true"] {
+    let stopped = format!("daemon-stop-{}-{id}", after.len());
+    guard.containers.push(stopped.clone());
+    with_daemons(&stopped, trap, after, &["SMOKE_EXIT_ON_TERM=7"]);
+    report_of(&stopped);
+    ok(&mut docker(&["kill", "--signal", "TERM", &stopped]));
+    assert_eq!(text(&ok(&mut docker(&["wait", &stopped]))).trim(), "7", "{after}");
+    let log = logs(&stopped);
+    let (app_at, daemon_at) = (log.find("app exited with 7"), log.find("daemon stopped"));
+    assert!(app_at.is_some() && daemon_at.is_some(), "{after}: {log}");
+    if !after.is_empty() {
+      assert!(app_at < daemon_at, "the daemon stops after the app: {log}");
+    }
+    finish(&stopped);
+  }
+
   // --- the hub: the same image, wireguard-tools inside, keys generated there too.
   let (hub_priv, hub_pub) = wg_key(&image);
   let (spoke_priv, spoke_pub) = wg_key(&image);
@@ -203,28 +313,6 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
       ),
     ]),
   );
-  // --- the ping listener: python's http.server as 999; its access log is the assertion.
-  let hc = format!("hc-{id}");
-  guard.containers.push(hc.clone());
-  ok(&mut docker(&[
-    "run",
-    "-d",
-    "--name",
-    &hc,
-    "--network",
-    &net,
-    "--user",
-    "999:999",
-    "--entrypoint",
-    "/app/.venv/bin/python",
-    &image,
-    "-m",
-    "http.server",
-    "8080",
-    "--bind",
-    "0.0.0.0",
-  ]));
-
   // --- the spoke: the app under the supervisor with the tunnel, a 1 s poll. The stale window
   // must exceed WireGuard's 120 s rekey period (`latest-handshakes` advances only on a rekey),
   // or a healthy tunnel reads as stale every few seconds and flaps; 150 leaves 30 s of slack.
