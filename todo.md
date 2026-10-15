@@ -9,8 +9,8 @@
   no `/` and no empty segment, so the tag still cannot steer the release URL elsewhere. The same
   change covers `require_version`'s stamped `hub_version`, `wireguard-hub`'s `TAG_RE` in
   `peers.py` (its release job refuses to stamp any other tag today), and the hub design's 4.1
-  and its tag tests in 13, recorded there first. `wireguard-spoke-agent` gets this shape first
-  (owner, 2026-10-14).
+  and its tag tests in 13, recorded there first. `wireguard-spoke-agent` checks this shape since
+  0.1.2 (owner, 2026-10-14).
 
 - Hook the binary's log lines into aeth_ext's logging. Today `run` writes plain lines to stderr
   with no levels, so the container log is the only sink and nothing reaches the central log
