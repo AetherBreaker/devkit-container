@@ -1,5 +1,17 @@
 # todo
 
+- Widen the hub tag check to every version shape uv supports, with exactly one `v` in front.
+  `validate_tag` (`bundle.rs`) accepts only `v<int>.<int>.<int>`, so a hub deployed at a dev,
+  alpha, rc or post release (`v1.6.0.dev1`, `v1.6.0a1`) makes `/version` read as unreachable:
+  spokes are refused at boot (`config unavailable`, unless the cache serves) and skip every
+  version check at runtime. The shape is "v" plus a PEP 440 version as uv parses it (epoch,
+  pre, post, dev and local segments), the remainder not itself starting with `v`; PEP 440 has
+  no `/` and no empty segment, so the tag still cannot steer the release URL elsewhere. The same
+  change covers `require_version`'s stamped `hub_version`, `wireguard-hub`'s `TAG_RE` in
+  `peers.py` (its release job refuses to stamp any other tag today), and the hub design's 4.1
+  and its tag tests in 13, recorded there first. `wireguard-spoke-agent` gets this shape first
+  (owner, 2026-10-14).
+
 - Hook the binary's log lines into aeth_ext's logging. Today `run` writes plain lines to stderr
   with no levels, so the container log is the only sink and nothing reaches the central log
   server. The likely shape is a Rust library in aeth_ext that connects to the central log server
