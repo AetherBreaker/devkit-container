@@ -56,7 +56,8 @@ enum Command {
     #[arg(long, default_value = "/app/pyproject.toml")]
     pyproject: PathBuf,
   },
-  /// Exit 0 when every heartbeat file is fresh, else 1 with a reason per file on stderr.
+  /// Exit 0 when every heartbeat file is fresh, else 1 with a reason per file on stderr. Under
+  /// `WG_TOLERATE_DISCONNECTED=1` the tunnel's file is skipped (timeclock design §11.2).
   Healthcheck {
     /// A heartbeat file to check; repeatable. Default: the app's, under --app-root.
     #[arg(long = "file")]
@@ -94,7 +95,8 @@ fn main() -> ExitCode {
       } else {
         files
       };
-      return ExitCode::from(healthcheck::run(&files, max_age));
+      let tolerate = std::env::var("WG_TOLERATE_DISCONNECTED").as_deref() == Ok("1");
+      return ExitCode::from(healthcheck::run(&files, max_age, tolerate));
     }
     #[cfg(unix)]
     Command::Run {

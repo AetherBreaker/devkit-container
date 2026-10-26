@@ -281,8 +281,8 @@ fn fetched_mode_boots_from_the_hub_release_re_applies_in_place_asks_before_givin
   assert!(log.contains("starting Disconnected") && log.contains("not enrolled"), "{log}");
   let hc = healthcheck(&tolerated);
   assert!(
-    String::from_utf8_lossy(&hc.stderr).contains("wireguard-heartbeat.txt"),
-    "unhealthy, naming the tunnel file"
+    !String::from_utf8_lossy(&hc.stderr).contains("wireguard-heartbeat.txt"),
+    "under the switch the healthcheck judges the app's file alone"
   );
   ok(&mut docker(&["rm", "-f", &tolerated]));
   ok(&mut docker(&["volume", "rm", "-f", &guard.volume]));
