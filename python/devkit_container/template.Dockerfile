@@ -18,8 +18,7 @@ ENV UV_LINK_MODE=copy
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
-# Project additions before the first sync: system packages dependencies need to compile.
-# The repo isn't cloned yet, so a file this needs is COPYed from the build context.
+# System packages deps need to compile; the repo isn't cloned yet, so COPY a needed file from the build context.
 # !window builder-setup:
 # !end builder-setup
 
