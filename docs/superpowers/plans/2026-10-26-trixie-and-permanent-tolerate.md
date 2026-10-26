@@ -282,7 +282,7 @@ Inline, by the orchestrating session. The merge is the owner's.
 
 Run: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Expected: clean, PASS.
 
-- [ ] **Step 2: Push and open the PR**
+- [ ] **Step 2: Push and open the PR** (PR #4 open; CI red only in `docker_fetched`: the fixture repo `wireguard-hub-smoke` is gone and the token gets HTTP 401 — owner action)
 
 ```bash
 git push -u origin feat/trixie-permanent-tolerate
@@ -303,4 +303,4 @@ uv run devkit release minor
 
 Expected: tag `v2.3.0`, the release workflow green, the Windows and manylinux wheels on SFTPyPI (an anonymous GET of `https://pypi.sweetfiretobacco.com/jacob.ogden/internal/+simple/devkit-container/` lists `2.3.0`).
 
-- [ ] **Step 5: Hand-off note** in the release notes or PR: consumers move to trixie on their next `setup-project` or `docker-pin`; tunnel-probe's `final` window hard-codes Microsoft's `debian/12` apt repo and needs `debian/13` then (timeclock design §14).
+- [x] **Step 5: Hand-off note** (in the PR body, #4) in the release notes or PR: consumers move to trixie on their next `setup-project` or `docker-pin`; tunnel-probe's `final` window hard-codes Microsoft's `debian/12` apt repo and needs `debian/13` then (timeclock design §14).
