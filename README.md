@@ -182,9 +182,9 @@ mount, so another container mounting the same path read-only can check them.
 ## Tests
 
 `cargo test` covers the parsers, the heartbeat files, the ping URLs, the `WG_*` contract, the
-stale-and-re-up rule, the ping decision, the `healthcheck` subcommand and the Dockerfile
-template's shape (both stages on trixie, the `builder-setup` window between the `git` install
-and the clone); on Linux as root, the entrypoint. The smoke tests (`cargo test --test docker_smoke --test docker_supervisor -- --ignored
+stale-and-re-up rule, the ping decision, the `healthcheck` subcommand and the template's shape
+(both stages on trixie, `builder-setup` before the manifest clone); on Linux as root, the
+entrypoint. The smoke tests (`cargo test --test docker_smoke --test docker_supervisor -- --ignored
 --nocapture`; CI runs them) build the wheel inside the official maturin container (a manylinux
 wheel, as a release builds one; the host needs Docker and nothing else), build the template
 Dockerfile around a scratch app with that wheel installed into the venv, and start it on a named
@@ -206,11 +206,12 @@ three releases (the test spoke enrolled at two addresses, then dropped), and the
 pairs as constants in the source. It reads `DEVKIT_SMOKE_WG_HUB_TOKEN` from the environment (CI:
 a repository secret) and refuses to run without it. Asserts the boot fetch and the cache, a
 refused start when not enrolled or without a hub, the same boot tolerated under
-`WG_TOLERATE_DISCONNECTED=1` and healthy on the app's file alone, the in-place re-apply without
-the interface going down, the consent hold and ok before exit 75, and the removal shutdown. The wireguard tests need the host kernel's
-wireguard module (`sudo modprobe wireguard`). `ci/render.sh` dry-runs `setup-project` on a scratch project holding this checkout's
-wheel, with the mode off and on, so both templates meet the released devkit's parser before a
-release; a render error fails it.
+`WG_TOLERATE_DISCONNECTED=1` and healthy on the app's file alone, the in-place re-apply
+without the interface going down, the consent hold and ok before exit 75, and the removal
+shutdown. The wireguard tests need the host kernel's wireguard module (`sudo modprobe
+wireguard`). `ci/render.sh` dry-runs `setup-project` on a scratch project holding this
+checkout's wheel, with the mode off and on, so both templates meet the released devkit's
+parser before a release; a render error fails it.
 
 ## Releasing
 
