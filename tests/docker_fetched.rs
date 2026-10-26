@@ -1,7 +1,8 @@
 //! Fetched mode end to end (spec 13): the image built with the mode on, a hub container on the
 //! test network serving `/version` and holding the fixture hub's key, and the bundle fetched
-//! from real GitHub, from `AetherBreaker/wireguard-hub-smoke`. Needs docker, the network, the
-//! WireGuard kernel module and `DEVKIT_SMOKE_WG_HUB_TOKEN`; `#[ignore]`, CI runs it.
+//! from real GitHub, from the public `AetherBreaker/wireguard-hub-smoke`. Needs docker, the
+//! network and the WireGuard kernel module; `#[ignore]`, CI runs it. With
+//! `DEVKIT_SMOKE_WG_HUB_TOKEN` set it reads the release through the API, else the public download.
 
 mod common;
 
@@ -13,7 +14,7 @@ const FIXTURE_REPO: &str = "AetherBreaker/wireguard-hub-smoke";
 const TOKEN_VAR: &str = "DEVKIT_SMOKE_WG_HUB_TOKEN";
 
 // The fixture's key pairs. They guard nothing: the hub is a throwaway container on a test
-// network and the "spoke" is this test. Committed so the test needs no secret beyond the token.
+// network and the "spoke" is this test. Committed so the test needs no secret.
 const HUB_PRIVATE: &str = "YEoYA+0twxQT91W5VQ+2fImxyT0TAythAx6W2tPkGHk="; // gitleaks:allow trufflehog:ignore ggignore
 const HUB_PUBLIC: &str = "mLANVKHPCTOCpBzbTtJd+pKV69i0fQFxlV4EvHjxyWQ=";
 const SPOKE_PRIVATE: &str = "ECDIbwJdnc3PZipjYiwQS2PuEPgszzterRF02ftUs38="; // gitleaks:allow trufflehog:ignore ggignore
@@ -164,12 +165,12 @@ fn spoke_env(token: &str, private_key: &str, extra: &[(&str, &str)]) -> Vec<Stri
 }
 
 #[test]
-#[ignore = "needs docker, the network, the wireguard kernel module and DEVKIT_SMOKE_WG_HUB_TOKEN; run with --ignored"]
+#[ignore = "needs docker, the network and the wireguard kernel module; run with --ignored"]
 fn fetched_mode_boots_from_the_hub_release_re_applies_in_place_asks_before_giving_up_and_obeys_a_removal() {
-  let token = std::env::var(TOKEN_VAR)
-    .ok()
-    .filter(|t| !t.trim().is_empty())
-    .unwrap_or_else(|| panic!("{TOKEN_VAR} is not set: the fetched-mode smoke test reads the fixture release with it (spec 11)"));
+  // Unset or empty: the spokes get WG_HUB_TOKEN empty, as the rendered compose passes it. The
+  // binary reads that as no token (the public download); the report's scrub assertion still sees
+  // a present variable.
+  let token = std::env::var(TOKEN_VAR).unwrap_or_default();
   ok(&mut docker(&["version", "--format", "{{.Server.Os}}"]));
   let root = root();
   let work = tempfile::tempdir().unwrap();
