@@ -263,7 +263,7 @@ pub mod unix {
           match self.plan.applied.clone() {
             None => {
               let r = self.plan.interface.apply(&effective);
-              self.classify(r, log)?;
+              self.classify(r, log, true)?;
               log.line(&format!("applied {tag}: {}", effective.describe()));
               self.plan.applied = Some(Applied { tag: Some(tag), effective });
               self.health.config_applied();
@@ -274,7 +274,7 @@ pub mod unix {
             }
             Some(old) => {
               let r = self.plan.interface.reapply(&old.effective, &effective, self.plan.endpoint_ok);
-              self.classify(r, log)?;
+              self.classify(r, log, true)?;
               log.line(&format!("re-applied {tag} in place: {}", old.effective.diff(&effective)));
               self.plan.applied = Some(Applied { tag: Some(tag), effective });
               self.health.config_applied();
@@ -307,8 +307,9 @@ pub mod unix {
       }
     }
 
-    /// Spec 5.3: a local failure is Broken; the endpoint failing is Disconnected.
-    fn classify(&mut self, r: Result<(), ApplyError>, log: &Log) -> Result<(), Exit> {
+    /// Spec 5.3: a local failure is Broken; the endpoint failing is Disconnected, logged only with
+    /// `log_endpoint`, which a re-up whose line is suppressed passes false (timeclock design §11.2).
+    fn classify(&mut self, r: Result<(), ApplyError>, log: &Log, log_endpoint: bool) -> Result<(), Exit> {
       match r {
         Ok(()) => {
           self.plan.endpoint_ok = true;
@@ -316,7 +317,9 @@ pub mod unix {
         }
         Err(ApplyError::Endpoint(e)) => {
           self.plan.endpoint_ok = false;
-          log.line(&format!("endpoint unresolvable: {e:#}"));
+          if log_endpoint {
+            log.line(&format!("endpoint unresolvable: {e:#}"));
+          }
           Ok(())
         }
         Err(ApplyError::Local(e)) => Err(Exit::Broken(e)),
@@ -345,17 +348,25 @@ pub mod unix {
       if fresh && let Err(e) = heartbeat::write(tunnel_beat, now) {
         log.line(&format!("{e:#}"));
       }
+      let more = match d.log_repair {
+        Some(n) if n > 0 => format!(" ({n} more since the last line)"),
+        _ => String::new(),
+      };
       match (d.repair, self.plan.applied.clone()) {
         (Repair::Obtain, _) => self.start_fetch(),
         (Repair::ResetEndpoint, Some(a)) => {
-          log.line(&format!("wireguard re-up: resetting the endpoint {}", a.effective.endpoint));
+          if d.log_repair.is_some() {
+            log.line(&format!("wireguard re-up: resetting the endpoint {}{more}", a.effective.endpoint));
+          }
           let r = self.plan.interface.set_endpoint(&a.effective);
-          self.classify(r, log)?;
+          self.classify(r, log, d.log_repair.is_some())?;
         }
         (Repair::DownUp, Some(a)) => {
-          log.line("wireguard re-up: wg0 down and up");
+          if d.log_repair.is_some() {
+            log.line(&format!("wireguard re-up: wg0 down and up{more}"));
+          }
           let r = self.plan.interface.down_up(&a.effective);
-          self.classify(r, log)?;
+          self.classify(r, log, d.log_repair.is_some())?;
         }
         _ => {}
       }

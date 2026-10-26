@@ -85,8 +85,9 @@ itself.
   Every `WG_POLL_SECS` the supervisor reads `wg show wg0 latest-handshakes`: younger than
   `WG_STALE_SECS` is Connected (the tunnel heartbeat written, the disconnected clock reset);
   else Disconnected, with the repair alternating between re-setting the endpoint (re-resolving
-  its name) and taking `wg0` down and up, each re-up logged, and in fetched mode a version check
-  each poll, because a hub change is a common cause. While Connected in fetched mode the hub's
+  its name) and taking `wg0` down and up, the first re-up of a disconnection logged, then at most
+  once an hour with the count since, and in fetched mode a version check each poll, because a
+  hub change is a common cause. While Connected in fetched mode the hub's
   version is checked every `WG_VERSION_POLL_SECS`; a new tag whose bundle changes this spoke's
   entry is applied in place, field by field, without the interface going down; one whose bundle
   drops this spoke ends the run: `/fail`, SIGINT to the app (30 s, then SIGKILL), `wg0` down,

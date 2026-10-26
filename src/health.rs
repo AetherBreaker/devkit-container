@@ -86,10 +86,16 @@ pub struct Decision {
   /// Start a consent ask with `wireguard-disconnected <n>s`, `n` being the seconds carried here.
   pub ask: Option<u64>,
   pub give_up: Option<GiveUp>,
+  /// Log this re-up's line, `n` re-ups having gone unlogged since the last one (timeclock design §11.2).
+  pub log_repair: Option<u64>,
 }
 
 /// Seconds between asks, measured from the previous reply or timeout (6.3).
 pub const ASK_INTERVAL_SECS: u64 = 60;
+
+/// Seconds between re-up lines after a disconnection's first (timeclock design §11.2): offline under the
+/// switch, a line per poll is about 2,900 a day into `devkit-container.log`, which is never rotated.
+pub const REPAIR_LOG_INTERVAL_SECS: u64 = 3600;
 
 #[derive(Debug)]
 struct Pending {
@@ -108,6 +114,8 @@ pub struct Health {
   disconnected_since: Option<u64>,
   next_repair: Repair,
   pending: Option<Pending>,
+  last_repair_line: Option<u64>,
+  unlogged_repairs: u64,
 }
 
 impl Health {
@@ -121,6 +129,8 @@ impl Health {
       disconnected_since: None,
       next_repair: Repair::ResetEndpoint,
       pending: None,
+      last_repair_line: None,
+      unlogged_repairs: 0,
     }
   }
 
@@ -145,12 +155,15 @@ impl Health {
       check_version: false,
       ask: None,
       give_up: None,
+      log_repair: None,
     };
     if fresh {
       // Connected resets the clock, cancels a pending shutdown and restarts the alternation.
       self.disconnected_since = None;
       self.pending = None;
       self.next_repair = Repair::ResetEndpoint;
+      self.last_repair_line = None;
+      self.unlogged_repairs = 0;
       return d;
     }
     let since = *self.disconnected_since.get_or_insert(now);
@@ -163,6 +176,16 @@ impl Health {
           Repair::ResetEndpoint => Repair::DownUp,
           _ => Repair::ResetEndpoint,
         };
+        if self
+          .last_repair_line
+          .is_none_or(|t| now.saturating_sub(t) >= REPAIR_LOG_INTERVAL_SECS)
+        {
+          d.log_repair = Some(self.unlogged_repairs);
+          self.last_repair_line = Some(now);
+          self.unlogged_repairs = 0;
+        } else {
+          self.unlogged_repairs += 1;
+        }
         d.check_version = self.fetched;
       }
     }
@@ -348,5 +371,34 @@ mod tests {
     let d = t.poll(10_000, OK, false, None);
     assert_eq!((d.ask, d.give_up), (None, None));
     assert_eq!(d.repair, Repair::DownUp, "repairs go on");
+  }
+
+  #[test]
+  fn repair_lines_come_first_then_hourly_with_the_unlogged_count() {
+    // Tolerate on: the permanent-offline case, no asks or give-up to interleave.
+    let mut h = Health::new(true, true, 1800, 0);
+    assert_eq!(h.poll(0, OK, true, None).log_repair, None, "Connected repairs nothing");
+    assert_eq!(
+      h.poll(30, OK, false, None).log_repair,
+      Some(0),
+      "the first repair of a disconnection"
+    );
+    for t in (60..3630).step_by(30) {
+      assert_eq!(h.poll(t, OK, false, None).log_repair, None, "suppressed at {t}");
+    }
+    assert_eq!(h.poll(3630, OK, false, None).log_repair, Some(119), "an hour on, with the count");
+    h.poll(3660, OK, true, None);
+    assert_eq!(
+      h.poll(3690, OK, false, None).log_repair,
+      Some(0),
+      "a new disconnection logs at once"
+    );
+    // An Obtain repair logs no line of its own, so it never claims one.
+    let mut u = Health::new(true, true, 1800, 0);
+    assert_eq!(
+      u.poll(0, Interface::Unconfigured(Reason::ConfigUnavailable), false, None)
+        .log_repair,
+      None
+    );
   }
 }
