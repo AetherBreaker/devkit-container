@@ -207,8 +207,9 @@ two-file healthcheck naming the file), and the ping against a local HTTP listene
 plain, `/fail`). `docker_fetched` runs fetched mode against real GitHub: a hub container serving
 `/version` on the test network, the fixture repository `AetherBreaker/wireguard-hub-smoke` with
 three releases (the test spoke enrolled at two addresses, then dropped), and the test's own key
-pairs as constants in the source. It reads `DEVKIT_SMOKE_WG_HUB_TOKEN` from the environment (CI:
-a repository secret) and refuses to run without it. Asserts the boot fetch and the cache, a
+pairs as constants in the source. The fixture is public, so it needs no token and takes the
+public download; with `DEVKIT_SMOKE_WG_HUB_TOKEN` set it passes that as `WG_HUB_TOKEN` and takes
+the API path. Asserts the boot fetch and the cache, a
 refused start when not enrolled or without a hub, the same boot tolerated under
 `WG_TOLERATE_DISCONNECTED=1` and healthy on the app's file alone, the in-place re-apply
 without the interface going down, the consent hold and ok before exit 75, and the removal
