@@ -36,18 +36,29 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
   let logs = root.join("persisted_data").join("logs");
   std::fs::create_dir_all(&logs).unwrap();
   // Default: the app's file under --app-root, max age 180.
-  let out = bin().args(["healthcheck", "--app-root"]).arg(root).output().unwrap();
+  let out = bin()
+    .env_remove("WG_TOLERATE_DISCONNECTED")
+    .args(["healthcheck", "--app-root"])
+    .arg(root)
+    .output()
+    .unwrap();
   assert_eq!(out.status.code(), Some(1));
   let err = String::from_utf8_lossy(&out.stderr);
   assert!(err.contains("heartbeat.txt") && err.contains("missing"), "{err}");
   let now = jiff::Timestamp::now();
   std::fs::write(logs.join("heartbeat.txt"), now.to_string()).unwrap();
-  let out = bin().args(["healthcheck", "--app-root"]).arg(root).output().unwrap();
+  let out = bin()
+    .env_remove("WG_TOLERATE_DISCONNECTED")
+    .args(["healthcheck", "--app-root"])
+    .arg(root)
+    .output()
+    .unwrap();
   assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
   // Two files, one stale: exit 1, one reason line, naming the stale one only.
   let old = now.checked_sub(jiff::Span::new().seconds(400)).unwrap();
   std::fs::write(logs.join("wireguard-heartbeat.txt"), old.to_string()).unwrap();
   let out = bin()
+    .env_remove("WG_TOLERATE_DISCONNECTED")
     .args(["healthcheck", "--file"])
     .arg(logs.join("heartbeat.txt"))
     .arg("--file")
@@ -60,11 +71,51 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
   assert!(err.contains("wireguard-heartbeat.txt") && err.contains("stale by"), "{err}");
   // --max-age widens it.
   let out = bin()
+    .env_remove("WG_TOLERATE_DISCONNECTED")
     .args(["healthcheck", "--max-age", "1000", "--file"])
     .arg(logs.join("wireguard-heartbeat.txt"))
     .output()
     .unwrap();
   assert!(out.status.success());
+}
+
+#[test]
+fn healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch() {
+  let dir = tempfile::tempdir().unwrap();
+  let logs = dir.path().join("persisted_data").join("logs");
+  std::fs::create_dir_all(&logs).unwrap();
+  let (app, tunnel) = (logs.join("heartbeat.txt"), logs.join("wireguard-heartbeat.txt"));
+  let now = jiff::Timestamp::now();
+  let old = now.checked_sub(jiff::Span::new().seconds(400)).unwrap();
+  std::fs::write(&app, now.to_string()).unwrap();
+  std::fs::write(&tunnel, old.to_string()).unwrap();
+  let check = |tolerate: Option<&str>, files: &[&std::path::Path]| {
+    let mut cmd = bin();
+    cmd.arg("healthcheck").env_remove("WG_TOLERATE_DISCONNECTED");
+    if let Some(v) = tolerate {
+      cmd.env("WG_TOLERATE_DISCONNECTED", v);
+    }
+    for f in files {
+      cmd.arg("--file").arg(f);
+    }
+    cmd.output().unwrap()
+  };
+  // Under the switch a stale tunnel file is ignored.
+  let out = check(Some("1"), &[&app, &tunnel]);
+  assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+  // Only exactly `1` is the switch; the entrypoint refuses anything else at boot.
+  let out = check(Some("true"), &[&app, &tunnel]);
+  assert_eq!(out.status.code(), Some(1));
+  assert!(String::from_utf8_lossy(&out.stderr).contains("wireguard-heartbeat.txt"));
+  // A missing tunnel file is ignored too; a stale app file is still reported, alone.
+  std::fs::remove_file(&tunnel).unwrap();
+  std::fs::write(&app, old.to_string()).unwrap();
+  let out = check(Some("1"), &[&app, &tunnel]);
+  assert_eq!(out.status.code(), Some(1));
+  let err = String::from_utf8_lossy(&out.stderr);
+  assert!(err.contains("heartbeat.txt") && !err.contains("wireguard-heartbeat.txt"), "{err}");
+  // Only the tunnel file named: nothing is left to check, so healthy.
+  assert!(check(Some("1"), &[&tunnel]).status.success());
 }
 
 #[cfg(not(unix))]

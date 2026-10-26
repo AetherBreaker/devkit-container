@@ -78,7 +78,9 @@ itself.
   `/fail` ping with the reason, exit 1. The reasons are `config unavailable`, `not enrolled`
   (naming the key to enrol; then redeploy), `endpoint unresolvable`, and no handshake in time.
   `WG_TOLERATE_DISCONNECTED=1` runs anyway, Disconnected, for an emergency where a connection
-  cannot happen for an external reason; a local failure (Broken) is exit 1 either way.
+  cannot happen for an external reason, or permanently, for an app that must keep working
+  offline (a time clock); the `healthcheck` subcommand then judges the app's file alone; a local
+  failure (Broken) is exit 1 either way.
 
   Every `WG_POLL_SECS` the supervisor reads `wg show wg0 latest-handshakes`: younger than
   `WG_STALE_SECS` is Connected (the tunnel heartbeat written, the disconnected clock reset);
@@ -107,7 +109,9 @@ itself.
   inspect` shows. `--file PATH` is repeatable (default: the app's file under `--app-root`);
   `--max-age SECS` defaults to 180. It reads files only: no root, no capabilities, no `wg`, no
   pyproject parse, no dependence on the supervisor. A bare timestamp (no offset) is read as
-  container-local time.
+  container-local time. Under `WG_TOLERATE_DISCONNECTED=1` a `--file` named
+  `wireguard-heartbeat.txt` is skipped, so a spoke running offline stays healthy while its app
+  is; the supervisor still sends `/fail` when the tunnel goes stale.
 
 ## `[tool.docker]` schema
 
@@ -147,7 +151,7 @@ Read by `run`; empty is unset; a failure names the variable, never its value.
 | `WG_DISCONNECTED_LIMIT_SECS` | continuous Disconnected time after which the shutdown is pending; default 1800 | no |
 | `WG_HOLD_LIMIT_SECS` | how long the app may hold a pending shutdown; default 0, no bound | no |
 | `WG_VERSION_POLL_SECS` | fetched mode: interval between version checks while Connected; default 300 | no |
-| `WG_TOLERATE_DISCONNECTED` | `1`: a boot that cannot connect runs Disconnected instead of being refused, and there is no give-up; for emergencies; anything but unset, empty or `1` is refused | no |
+| `WG_TOLERATE_DISCONNECTED` | `1`: a boot that cannot connect runs Disconnected instead of being refused, and there is no give-up; for an emergency, or permanently for an app that must keep working offline; the `healthcheck` then skips the tunnel file; anything but unset, empty or `1` is refused | no |
 | `HEARTBEAT_SLUG` | the healthchecks.io slug; compose sets it to the service name; fallback: the single `services` entry | no |
 | `PINGKEY` | the healthchecks.io ping key; with a slug, builds the autoprovisioning URL | no |
 | `ALERTS_HEALTHCHECK_PING_URL` | a fixed ping URL; wins over the key | no |
