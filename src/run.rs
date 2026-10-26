@@ -247,7 +247,8 @@ fn boot_tunnel(app_root: &Path, log: &Log, ping: Option<&Ping>) -> Result<BootTu
   let mut applied = None;
   let mut endpoint_ok = true;
   if let Some((tag, effective)) = obtained {
-    match iface.apply(&effective) {
+    // Under the switch the boot goes on into the polls, which retry the endpoint.
+    match iface.apply(&effective, settings.tolerate) {
       Err(ApplyError::Local(e)) => {
         iface.down();
         alert(&format!("{e:#}"));
