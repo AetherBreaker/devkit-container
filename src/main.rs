@@ -14,7 +14,7 @@ mod fetch;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod health;
 mod healthcheck;
-#[cfg_attr(not(unix), allow(dead_code))] // `write` and the tunnel file serve the supervisor (Unix)
+#[cfg_attr(not(unix), allow(dead_code))] // `write` serves the supervisor (Unix)
 mod heartbeat;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod logfile;
@@ -57,7 +57,7 @@ enum Command {
     pyproject: PathBuf,
   },
   /// Exit 0 when every heartbeat file is fresh, else 1 with a reason per file on stderr. Under
-  /// `WG_TOLERATE_DISCONNECTED=1` the tunnel's file is skipped (timeclock design §11.2).
+  /// `WG_TOLERATE_DISCONNECTED=1` the tunnel's file (`wireguard-heartbeat.txt`) is skipped.
   Healthcheck {
     /// A heartbeat file to check; repeatable. Default: the app's, under --app-root.
     #[arg(long = "file")]
