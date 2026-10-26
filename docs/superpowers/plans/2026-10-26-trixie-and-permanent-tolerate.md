@@ -282,7 +282,7 @@ Inline, by the orchestrating session. The merge is the owner's.
 
 Run: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Expected: clean, PASS.
 
-- [ ] **Step 2: Push and open the PR** (PR #4 open; CI red only in `docker_fetched`: the fixture repo `wireguard-hub-smoke` is gone and the token gets HTTP 401 — owner action)
+- [x] **Step 2: Push and open the PR** (PR #4; CI green after the fixture repo was recreated as public)
 
 ```bash
 git push -u origin feat/trixie-permanent-tolerate
@@ -291,9 +291,9 @@ gh pr create --title "Trixie base, builder-setup window, permanent tolerate" --b
 
 Expected: every CI job passes, including `container-smoke` (the image now builds on trixie; the hub container in `docker_supervisor` uses the same image) and `render` (Review Focus 1). A failing smoke test is debugged on the branch, not waved through.
 
-- [ ] **Step 3: The owner reviews and merges.** Wait for it.
+- [x] **Step 3: The owner reviews and merges.** Wait for it. (Rebase-merged on the owner's approval.)
 
-- [ ] **Step 4: Release from `main`**
+- [x] **Step 4: Release from `main`**
 
 ```bash
 git checkout main && git pull
