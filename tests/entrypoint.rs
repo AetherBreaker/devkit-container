@@ -103,7 +103,10 @@ fn healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch() {
   // Under the switch a stale tunnel file is ignored.
   let out = check(Some("1"), &[&app, &tunnel]);
   assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-  // Only exactly `1` is the switch; the entrypoint refuses anything else at boot.
+  // Padded is the switch too: the entrypoint trims it and boots tolerated, so both must agree.
+  let out = check(Some(" 1 "), &[&app, &tunnel]);
+  assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+  // Any other value is not the switch; the entrypoint refuses it at boot.
   let out = check(Some("true"), &[&app, &tunnel]);
   assert_eq!(out.status.code(), Some(1));
   assert!(String::from_utf8_lossy(&out.stderr).contains("wireguard-heartbeat.txt"));
