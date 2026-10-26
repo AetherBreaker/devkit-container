@@ -262,7 +262,7 @@ pub mod unix {
           }
           match self.plan.applied.clone() {
             None => {
-              let r = self.plan.interface.apply(&effective);
+              let r = self.plan.interface.apply(&effective, true);
               self.classify(r, log, true)?;
               log.line(&format!("applied {tag}: {}", effective.describe()));
               self.plan.applied = Some(Applied { tag: Some(tag), effective });

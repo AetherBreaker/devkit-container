@@ -179,6 +179,8 @@ pub struct Cmd {
   pub program: &'static str,
   pub args: Vec<String>,
   pub kind: CmdKind,
+  /// Set on this child only, never the supervisor's or the app's environment.
+  pub env: Option<(&'static str, &'static str)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,13 +194,14 @@ fn cmd(program: &'static str, args: &[&str], kind: CmdKind) -> Cmd {
     program,
     args: args.iter().map(|a| a.to_string()).collect(),
     kind,
+    env: None,
   }
 }
 
 /// The apply of 5.2 step 3: peer, address, link up, routes, and the endpoint last. The keepalive
 /// goes with the endpoint: WireGuard fires its first handshake when the keepalive is set, so set
 /// before the endpoint exists that attempt is lost and only the 5 s retry can succeed (measured).
-pub fn apply_commands(eff: &Effective) -> Vec<Cmd> {
+pub fn apply_commands(eff: &Effective, fail_fast: bool) -> Vec<Cmd> {
   let mut v = vec![
     cmd(
       "wg",
@@ -212,12 +215,16 @@ pub fn apply_commands(eff: &Effective) -> Vec<Cmd> {
     // `replace`, not `add`: the kernel may already have added the interface's own subnet.
     v.push(cmd("ip", &["route", "replace", cidr, "dev", IFACE], CmdKind::Local));
   }
-  v.push(endpoint_command(eff));
+  v.push(endpoint_command(eff, fail_fast));
   v
 }
 
-pub fn endpoint_command(eff: &Effective) -> Cmd {
-  cmd(
+/// `fail_fast` (`WG_ENDPOINT_RESOLUTION_RETRIES=0`) wherever the supervisor's poll is the retry
+/// loop: wg's own retries block that loop ~88 s per command offline (measured), past Docker's
+/// stop grace. Only a boot without the tolerate switch keeps them: its failure is a refused start
+/// with no poll behind it, and the retries are its grace for a DNS blip (timeclock design §11.2).
+pub fn endpoint_command(eff: &Effective, fail_fast: bool) -> Cmd {
+  let c = cmd(
     "wg",
     &[
       "set",
@@ -230,12 +237,16 @@ pub fn endpoint_command(eff: &Effective) -> Cmd {
       &eff.keepalive.to_string(),
     ],
     CmdKind::Endpoint,
-  )
+  );
+  Cmd {
+    env: fail_fast.then_some(("WG_ENDPOINT_RESOLUTION_RETRIES", "0")),
+    ..c
+  }
 }
 
 /// The in-place re-apply of 5.5: one row per changed field, in the table's order, the endpoint
-/// last. `endpoint_ok` false re-sets the endpoint even when it did not change, so a name that
-/// failed to resolve is retried by the same apply.
+/// last, failing fast (only the supervisor re-applies). `endpoint_ok` false re-sets the endpoint
+/// even when it did not change, so a name that failed to resolve is retried by the same apply.
 pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> Vec<Cmd> {
   use std::collections::BTreeSet;
   let mut v = Vec::new();
@@ -263,6 +274,7 @@ pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> 
       program: "wg",
       args,
       kind: CmdKind::Local,
+      env: None,
     });
   }
   if old.address != new.address {
@@ -276,7 +288,7 @@ pub fn reapply_commands(old: &Effective, new: &Effective, endpoint_ok: bool) -> 
     v.push(cmd("ip", &["route", "delete", cidr, "dev", IFACE], CmdKind::Local));
   }
   if key_changed || old.endpoint != new.endpoint || !endpoint_ok {
-    v.push(endpoint_command(new));
+    v.push(endpoint_command(new, true));
   }
   v
 }
@@ -306,10 +318,14 @@ mod unix {
   use super::{Cmd, CmdKind, IFACE};
   use crate::bundle::Effective;
 
-  /// Run a command, feeding `stdin` if given; an error names the command and its stderr.
-  fn run(program: &str, args: &[&str], stdin: Option<&str>) -> Result<String> {
+  /// Run a command, feeding `stdin` if given, with `env` on the child; an error names the command
+  /// and its stderr.
+  fn run(program: &str, args: &[&str], stdin: Option<&str>, env: Option<(&str, &str)>) -> Result<String> {
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some((k, v)) = env {
+      cmd.env(k, v);
+    }
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = cmd.spawn().with_context(|| format!("running {program} {}", args.join(" ")))?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
@@ -357,7 +373,7 @@ mod unix {
           );
         }
       }
-      let public_key = run("wg", &["pubkey"], Some(private_key))?.trim().to_string();
+      let public_key = run("wg", &["pubkey"], Some(private_key), None)?.trim().to_string();
       let iface = Interface {
         public_key,
         private_key: private_key.to_string(),
@@ -371,14 +387,14 @@ mod unix {
     }
 
     fn link_up_with_key(&self) -> Result<()> {
-      run("ip", &["link", "add", "dev", IFACE, "type", "wireguard"], None)?;
-      run("wg", &["set", IFACE, "private-key", "/dev/stdin"], Some(&self.private_key))?;
+      run("ip", &["link", "add", "dev", IFACE, "type", "wireguard"], None, None)?;
+      run("wg", &["set", IFACE, "private-key", "/dev/stdin"], Some(&self.private_key), None)?;
       Ok(())
     }
 
     fn exec(&self, c: &Cmd) -> Result<(), ApplyError> {
       let args: Vec<&str> = c.args.iter().map(String::as_str).collect();
-      match run(c.program, &args, None) {
+      match run(c.program, &args, None, c.env) {
         Ok(_) => Ok(()),
         Err(e) => Err(match c.kind {
           CmdKind::Local => ApplyError::Local(e),
@@ -388,9 +404,9 @@ mod unix {
     }
 
     /// The apply of 5.2 step 3; the preshared key, when there is one, goes over stdin right
-    /// after the peer command.
-    pub fn apply(&self, eff: &Effective) -> Result<(), ApplyError> {
-      for (i, c) in super::apply_commands(eff).iter().enumerate() {
+    /// after the peer command. `fail_fast` as in `endpoint_command`.
+    pub fn apply(&self, eff: &Effective, fail_fast: bool) -> Result<(), ApplyError> {
+      for (i, c) in super::apply_commands(eff, fail_fast).iter().enumerate() {
         self.exec(c)?;
         if i == 0
           && let Some(psk) = &self.preshared_key
@@ -399,6 +415,7 @@ mod unix {
             "wg",
             &["set", IFACE, "peer", &eff.hub_public_key, "preshared-key", "/dev/stdin"],
             Some(psk),
+            None,
           )
           .map_err(ApplyError::Local)?;
         }
@@ -406,8 +423,9 @@ mod unix {
       Ok(())
     }
 
+    /// The repairs (5.6) run on the supervisor's loop, so they fail fast.
     pub fn set_endpoint(&self, eff: &Effective) -> Result<(), ApplyError> {
-      self.exec(&super::endpoint_command(eff))
+      self.exec(&super::endpoint_command(eff, true))
     }
 
     pub fn reapply(&self, old: &Effective, new: &Effective, endpoint_ok: bool) -> Result<(), ApplyError> {
@@ -421,11 +439,11 @@ mod unix {
     pub fn down_up(&self, eff: &Effective) -> Result<(), ApplyError> {
       self.down();
       self.link_up_with_key().map_err(ApplyError::Local)?;
-      self.apply(eff)
+      self.apply(eff, true)
     }
 
     pub fn latest_handshake(&self, peer_key: &str) -> Result<Option<u64>> {
-      let out = run("wg", &["show", IFACE, "latest-handshakes"], None)?;
+      let out = run("wg", &["show", IFACE, "latest-handshakes"], None, None)?;
       Ok(parse_latest_handshake(&out, peer_key))
     }
 
@@ -446,6 +464,42 @@ mod unix {
     /// Best effort: an interface that is already gone is not an error.
     pub fn down(&self) {
       let _ = Command::new("ip").args(["link", "del", "dev", IFACE]).output();
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[test]
+    fn a_commands_variable_reaches_its_child_and_nothing_else() {
+      let iface = Interface {
+        public_key: String::new(),
+        private_key: String::new(),
+        preshared_key: None,
+      };
+      let eff = Effective {
+        address: "10.8.0.20/32".into(),
+        hub_public_key: "HUBKEY".into(),
+        endpoint: "tunnels.example.com:51820".into(),
+        allowed_ips: vec!["10.8.0.0/24".into()],
+        keepalive: 25,
+      };
+      // The planner's endpoint command, run as a probe of what its child sees.
+      let probe = |fail_fast: bool| Cmd {
+        program: "sh",
+        args: vec!["-c".into(), r#"[ "${WG_ENDPOINT_RESOLUTION_RETRIES-unset}" = 0 ]"#.into()],
+        ..super::super::endpoint_command(&eff, fail_fast)
+      };
+      assert!(iface.exec(&probe(true)).is_ok(), "the child sees WG_ENDPOINT_RESOLUTION_RETRIES=0");
+      assert!(
+        matches!(iface.exec(&probe(false)), Err(ApplyError::Endpoint(_))),
+        "without fail-fast the child keeps wg's default"
+      );
+      assert!(
+        std::env::var_os("WG_ENDPOINT_RESOLUTION_RETRIES").is_none(),
+        "never the supervisor's environment, so never the app's"
+      );
     }
   }
 }
@@ -623,8 +677,31 @@ mod tests {
   }
 
   #[test]
+  fn only_the_endpoint_command_fails_fast_and_only_when_asked() {
+    let fast = Some(("WG_ENDPOINT_RESOLUTION_RETRIES", "0"));
+    for fail_fast in [true, false] {
+      let cmds = apply_commands(&eff(), fail_fast);
+      let (endpoint, local) = cmds.split_last().unwrap();
+      assert_eq!(endpoint.kind, CmdKind::Endpoint);
+      assert_eq!(endpoint.env, if fail_fast { fast } else { None }, "fail_fast {fail_fast}");
+      assert!(local.iter().all(|c| c.env.is_none()), "a local command resolves no name");
+      assert_eq!(endpoint_command(&eff(), fail_fast).env, endpoint.env);
+    }
+    let mut everything = eff();
+    everything.hub_public_key = "NEWKEY".into();
+    everything.address = "10.8.0.21/32".into();
+    everything.allowed_ips = vec!["10.9.0.0/24".into()];
+    let cmds = reapply_commands(&eff(), &everything, true);
+    assert_eq!(cmds.iter().filter(|c| c.kind == CmdKind::Endpoint).count(), 1);
+    for c in &cmds {
+      let want = if c.kind == CmdKind::Endpoint { fast } else { None };
+      assert_eq!(c.env, want, "the re-apply is runtime only: {} {:?}", c.program, c.args);
+    }
+  }
+
+  #[test]
   fn the_apply_runs_the_endpoint_last() {
-    let cmds = apply_commands(&eff());
+    let cmds = apply_commands(&eff(), true);
     assert_eq!(
       lines(&cmds),
       [
