@@ -11,14 +11,14 @@ wheel, so the files a project builds and runs with always match the binary its i
 `[tool.docker].services`, locks it to the newest release the installed devkit accepts, and
 renders `docker/Dockerfile` from `devkit_container/template.Dockerfile` and the compose file from
 `devkit_container/compose.template.yaml` in the venv (both carry `# !` gates on
-`[tool.docker].wireguard`; the Dockerfile also carries three `# !window` regions (`builder-setup`
-before the first `uv sync`, `builder` after the project install, `final`) a project may fill,
-which `setup-project` renders around; the compose one also carries the `# !rule`
-annotations the compose step enforces). The image installs the package with `uv sync --frozen` and uses
-`/app/.venv/bin/devkit-container` for the build-time queries, as the entrypoint and as the
-compose healthcheck. `devkit docker-pin` refreshes a Dockerfile that
-drifted from the locked version before it pins. No Python runs in the image outside the app
-itself.
+`[tool.docker].wireguard`; the Dockerfile also carries four `# !window` regions a project may
+fill, which `setup-project` renders around: `builder-cached` (before the git ARGs, cached across
+releases), `builder-setup` (before the first `uv sync`), `builder` (after the project install),
+`final`; the compose one also carries the `# !rule` annotations the compose step enforces). The
+image installs the package with `uv sync --frozen` and uses `/app/.venv/bin/devkit-container`
+for the build-time queries, as the entrypoint and as the compose healthcheck.
+`devkit docker-pin` refreshes a Dockerfile that drifted from the locked version before it pins.
+No Python runs in the image outside the app itself.
 
 ## Subcommands
 
@@ -187,7 +187,8 @@ mount, so another container mounting the same path read-only can check them.
 
 `cargo test` covers the parsers, the heartbeat files, the ping URLs, the `WG_*` contract, the
 stale-and-re-up rule, the ping decision, the `healthcheck` subcommand and the template's shape
-(both stages on trixie, `builder-setup` before the manifest clone); on Linux as root, the
+(both stages on trixie, `builder-cached` above the git ARGs, `builder-setup` before the manifest
+clone); on Linux as root, the
 entrypoint. The smoke tests (`cargo test --test docker_smoke --test docker_supervisor -- --ignored
 --nocapture`; CI runs them) build the wheel inside the official maturin container (a manylinux
 wheel, as a release builds one; the host needs Docker and nothing else), build the template

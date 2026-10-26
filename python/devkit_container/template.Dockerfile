@@ -5,6 +5,11 @@ FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS builder
 
 WORKDIR /app
 
+# Sees neither git ARG, so its layers stay cached across releases: heavy, tag-independent steps
+# (e.g. compiling a C library) go here; COPY any repo file they need from the build context.
+# !window builder-cached:
+# !end builder-cached
+
 ARG GIT_TAG
 ARG GIT_REPO
 
