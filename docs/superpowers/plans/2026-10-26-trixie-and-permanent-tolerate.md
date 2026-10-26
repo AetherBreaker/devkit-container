@@ -44,7 +44,7 @@
 **Interfaces:**
 - Produces: the window markers `# !window builder-setup:` / `# !end builder-setup`, which the timeclock-system and timeclock-backend plans fill.
 
-- [ ] **Step 1: Write the failing test** `tests/template.rs`:
+- [x] **Step 1: Write the failing test** `tests/template.rs`:
 
 ```rust
 //! The shipped Dockerfile template's shape (timeclock design §11.1).
@@ -81,12 +81,12 @@ fn builder_setup_window_sits_between_the_git_install_and_the_clone() {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cargo test --test template`
 Expected: FAIL on both tests (bookworm `FROM` lines; `"# !window builder-setup:" missing`).
 
-- [ ] **Step 3: Edit the template**
+- [x] **Step 3: Edit the template**
 
 Both `FROM` lines to `ghcr.io/astral-sh/uv:python3.14-trixie-slim` (keep `AS builder` on the first). After the `git` install `RUN` (ends `:19`), insert a blank line, then:
 
@@ -99,15 +99,15 @@ Both `FROM` lines to `ghcr.io/astral-sh/uv:python3.14-trixie-slim` (keep `AS bui
 
 The existing `builder` and `final` windows stay where they are.
 
-- [ ] **Step 4: Update the docs**
+- [x] **Step 4: Update the docs**
 
 `README.md:14`: "two `# !window` regions" → "three `# !window` regions (`builder-setup` before the first `uv sync`, `builder` after the project install, `final`)". In `todo.md`'s "Consider building the image from the application's released wheel" item, replace `uv:python3.14-bookworm-slim` with `uv:python3.14-trixie-slim` and "the window comes after that sync" with "the `builder-setup` window (timeclock design §11.1) now runs before that sync, so a project can install a toolchain there". Leave the item open; closing it is the owner's call.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests** (full `cargo test` deferred to Task 4 Step 1: ledger ruling)
 
 Run: `cargo test --test template` → PASS. Then `cargo test` → PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add python/devkit_container/template.Dockerfile tests/template.rs README.md todo.md
@@ -129,7 +129,7 @@ The smoke tests (`docker_smoke`, `docker_supervisor`, `docker_fetched`, all `--i
 - Consumes: `heartbeat::TUNNEL_FILE` (`src/heartbeat.rs:11`, `"wireguard-heartbeat.txt"`).
 - Produces: `pub fn run(files: &[PathBuf], max_age: u64, tolerate: bool) -> u8` in `src/healthcheck.rs`.
 
-- [ ] **Step 1: Write the failing test** in `tests/entrypoint.rs`, beside `healthcheck_reads_files_only_and_says_why_it_fails` (reuse its `bin()`):
+- [x] **Step 1: Write the failing test** in `tests/entrypoint.rs`, beside `healthcheck_reads_files_only_and_says_why_it_fails` (reuse its `bin()`):
 
 ```rust
 #[test]
@@ -174,16 +174,16 @@ fn healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch() {
 
 Also add `.env_remove("WG_TOLERATE_DISCONNECTED")` to each `bin()` call in `healthcheck_reads_files_only_and_says_why_it_fails`, so a developer's shell can't change its outcome.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cargo test --test entrypoint healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch`
 Expected: FAIL at the first assertion (the stale tunnel file is reported).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `healthcheck::run(files, max_age, tolerate)`: when `tolerate`, skip every file whose `file_name()` is `heartbeat::TUNNEL_FILE`; everything else is unchanged. One comment: matched by name so the compose template's exact-list healthcheck stays as it is; the tunnel's staleness still reaches healthchecks.io through the supervisor's `/fail` (timeclock design §11.2). In `main.rs`, the `Healthcheck` arm passes `std::env::var("WG_TOLERATE_DISCONNECTED").as_deref() == Ok("1")`. Update the module doc and the subcommand's doc comment to say so.
 
-- [ ] **Step 4: Rewrite the smoke assertion** `tests/docker_fetched.rs:282-286`: the tolerated container's healthcheck no longer names the tunnel file:
+- [x] **Step 4: Rewrite the smoke assertion** `tests/docker_fetched.rs:282-286`: the tolerated container's healthcheck no longer names the tunnel file:
 
 ```rust
 let hc = healthcheck(&tolerated);
@@ -195,17 +195,17 @@ assert!(
 
 (`docker exec` runs with the container's environment, so the helper's `healthcheck` sees the switch.)
 
-- [ ] **Step 5: Update `README.md`**
+- [x] **Step 5: Update `README.md`**
 
 - `:79-80`: after "for an emergency where a connection cannot happen for an external reason", add: "or permanently, for an app that must keep working offline (a time clock); the `healthcheck` subcommand then judges the app's file alone".
 - `healthcheck` paragraph: "Under `WG_TOLERATE_DISCONNECTED=1` a `--file` named `wireguard-heartbeat.txt` is skipped, so a spoke running offline stays healthy while its app is; the supervisor still sends `/fail` when the tunnel goes stale."
 - `:149` row: replace "for emergencies" with "for an emergency, or permanently for an app that must keep working offline; the `healthcheck` then skips the tunnel file".
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests** (full `cargo test` deferred to Task 4 Step 1: ledger ruling)
 
 Run: `cargo test --test entrypoint` → PASS, then `cargo test` → PASS. (The rewritten smoke assertion runs in CI.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/healthcheck.rs src/main.rs tests/entrypoint.rs tests/docker_fetched.rs README.md
@@ -224,7 +224,7 @@ git commit -m "feat(healthcheck): judge the app alone under WG_TOLERATE_DISCONNE
 **Interfaces:**
 - Produces: `pub const REPAIR_LOG_INTERVAL_SECS: u64 = 3600;` and `Decision::log_repair: Option<u64>` in `src/health.rs`: `Some(n)` means log this poll's repair line, `n` being the repairs left unlogged since the previous line; `None` means stay quiet.
 
-- [ ] **Step 1: Write the failing test** in `src/health.rs`'s `tests` (uses its `OK`):
+- [x] **Step 1: Write the failing test** in `src/health.rs`'s `tests` (uses its `OK`):
 
 ```rust
 #[test]
@@ -245,27 +245,27 @@ fn repair_lines_come_first_then_hourly_with_the_unlogged_count() {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cargo test --bin devkit-container health::tests::repair_lines_come_first_then_hourly_with_the_unlogged_count`
 (a binary crate; `health` compiles on Windows too, so this runs on the workstation)
 Expected: FAIL to compile (`no field log_repair`).
 
-- [ ] **Step 3: Implement in `src/health.rs`**
+- [x] **Step 3: Implement in `src/health.rs`**
 
 `Health` gains `last_repair_line: Option<u64>` and `unlogged_repairs: u64`, both reset on a fresh poll (where the clock and alternation already reset). For a `ResetEndpoint` or `DownUp` repair: when `last_repair_line` is `None` or `now - last >= REPAIR_LOG_INTERVAL_SECS`, set `log_repair = Some(unlogged_repairs)`, record `now`, zero the count; otherwise count it and leave `None`. `Obtain` and `None` repairs leave `log_repair` at `None`. Doc the field and constant in one line each, citing timeclock design §11.2: offline under the switch, a line per poll is about 2,900 a day into `devkit-container.log`, which is never rotated.
 
-- [ ] **Step 4: Honor it in `src/supervisor.rs`**
+- [x] **Step 4: Honor it in `src/supervisor.rs`**
 
 In the `ResetEndpoint` and `DownUp` arms, log the existing line only when `d.log_repair` is `Some(n)`, appending ` ({n} more since the last line)` when `n > 0`. The repair itself still runs every poll. `classify` (`:310-325`) gains a `bool` for whether to log `endpoint unresolvable`: the repair arms pass `d.log_repair.is_some()`, every other call site `true`, so a failing name lookup offline doesn't log every other poll either. `endpoint_ok` is set the same either way.
 
-- [ ] **Step 5: Update `README.md:85`**: "each re-up logged" → "the first re-up of a disconnection logged, then at most once an hour with the count since".
+- [x] **Step 5: Update `README.md:85`**: "each re-up logged" → "the first re-up of a disconnection logged, then at most once an hour with the count since".
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests** (full `cargo test` deferred to Task 4 Step 1: ledger ruling)
 
 Run: `cargo test --bin devkit-container health` → PASS, then `cargo test` → PASS. `docker_supervisor`'s "a re-up in the log" wait still holds: the first repair is logged (CI).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/health.rs src/supervisor.rs README.md
@@ -278,7 +278,7 @@ git commit -m "feat(supervisor): log Disconnected repairs once, then hourly"
 
 Inline, by the orchestrating session. The merge is the owner's.
 
-- [ ] **Step 1: Final checks on the branch**
+- [x] **Step 1: Final checks on the branch** (Windows and a Linux rust:1 container: fmt, clippy, `cargo test` clean)
 
 Run: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Expected: clean, PASS.
 
