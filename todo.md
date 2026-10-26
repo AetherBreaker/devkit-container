@@ -48,8 +48,9 @@
   one-shot tools beside a Python app (2026-10-08).
 - Consider building the image from the application's released wheel instead of its git-tagged
   source. The builder's `uv sync --no-editable` builds the project from source, so a project with
-  Rust in it (maturin or setuptools-rust) can't build: `uv:python3.14-bookworm-slim` has no Rust
-  toolchain, and the window comes after that sync. Likely shape: sync dependencies only from the
+  Rust in it (maturin or setuptools-rust) can't build: `uv:python3.14-trixie-slim` has no Rust
+  toolchain, and the `builder-setup` window (timeclock design §11.1) now runs before that sync, so
+  a project can install a toolchain there. Likely shape: sync dependencies only from the
   tagged `pyproject.toml`/`uv.lock`, then install the project's prebuilt manylinux wheel for
   `GIT_TAG` (from SFTPyPI, or the GitHub release, which the devkit release workflow already
   attaches it to). Same origin (2026-10-08).

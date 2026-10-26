@@ -11,8 +11,9 @@ wheel, so the files a project builds and runs with always match the binary its i
 `[tool.docker].services`, locks it to the newest release the installed devkit accepts, and
 renders `docker/Dockerfile` from `devkit_container/template.Dockerfile` and the compose file from
 `devkit_container/compose.template.yaml` in the venv (both carry `# !` gates on
-`[tool.docker].wireguard`; the Dockerfile also carries two `# !window` regions a project may
-fill, which `setup-project` renders around; the compose one also carries the `# !rule`
+`[tool.docker].wireguard`; the Dockerfile also carries three `# !window` regions (`builder-setup`
+before the first `uv sync`, `builder` after the project install, `final`) a project may fill,
+which `setup-project` renders around; the compose one also carries the `# !rule`
 annotations the compose step enforces). The image installs the package with `uv sync --frozen` and uses
 `/app/.venv/bin/devkit-container` for the build-time queries, as the entrypoint and as the
 compose healthcheck. `devkit docker-pin` refreshes a Dockerfile that
