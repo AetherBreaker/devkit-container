@@ -73,34 +73,38 @@ itself.
   whose key is this spoke's, with the last validated bundle cached at
   `/app/persisted_data/wireguard/peers.toml` as the fallback when GitHub is unreachable; the
   apply (`wg set peer`, `ip address add`, `ip link set up`, one route per allowed IP, and the
-  endpoint last, the one command that resolves a name); then the first handshake within
+  endpoint last, the one command that resolves a name, wg retrying a failed resolution for about
+  90 s with no nameserver, the boot's grace for a DNS blip); then the first handshake within
   `WG_HANDSHAKE_TIMEOUT_SECS`. A boot that does not reach Connected is refused: `wg0` down, a
   `/fail` ping with the reason, exit 1. The reasons are `config unavailable`, `not enrolled`
   (naming the key to enrol; then redeploy), `endpoint unresolvable`, and no handshake in time.
   `WG_TOLERATE_DISCONNECTED=1` runs anyway, Disconnected, for an emergency where a connection
   cannot happen for an external reason, or permanently, for an app that must keep working
-  offline (a time clock); the `healthcheck` subcommand then judges the app's file alone. A local
-  failure (Broken) is exit 1 with or without the switch.
+  offline (a time clock); the `healthcheck` subcommand then judges the app's file alone, and the
+  boot's endpoint command fails fast (`WG_ENDPOINT_RESOLUTION_RETRIES=0`, on that command alone),
+  since the polls retry it. A local failure (Broken) is exit 1 with or without the switch.
 
   Every `WG_POLL_SECS` the supervisor reads `wg show wg0 latest-handshakes`: younger than
   `WG_STALE_SECS` is Connected (the tunnel heartbeat written, the disconnected clock reset);
   else Disconnected, with the repair alternating between re-setting the endpoint (re-resolving
   its name) and taking `wg0` down and up, the first re-up of a disconnection logged, then
   at most once an hour with the count since, and in fetched mode a version check each poll,
-  because a hub change is a common cause. While Connected in fetched mode the hub's version
-  is checked every `WG_VERSION_POLL_SECS`; a new tag whose bundle changes this spoke's entry
-  is applied in place, field by field, without the interface going down; one whose bundle
-  drops this spoke ends the run: `/fail`, SIGINT to the app (30 s, then SIGKILL), `wg0` down,
-  exit 75. After `WG_DISCONNECTED_LIMIT_SECS` of continuous Disconnected the supervisor asks the
-  app over the consent socket (`may-shutdown wireguard-disconnected <n>s`, one line; only a
-  literal `hold` back within 60 s postpones, asked again 60 s later; `WG_HOLD_LIMIT_SECS` above
-  zero caps the holding) and then proceeds the same way, exit 75. A local command failing at
-  runtime (Broken) stops the app with SIGTERM (30 s, then SIGKILL), brings `wg0` down, sends
-  `/fail` and exits 1. Under `WG_TOLERATE_DISCONNECTED=1` there is no give-up. The heartbeat
-  files and the ping are as before: while the handshake is fresh the tunnel's file is written;
-  then every file the supervisor is responsible for is checked and it pings `/start` once when
-  every file is first fresh, plain on every fresh poll, `/fail` with the reason on the
-  transition to stale and with the code on a nonzero child exit. The URL is
+  because a hub change is a common cause. Every endpoint command at runtime (the repairs, a
+  fetched bundle's apply or re-apply) fails fast the same way, so an outage never holds up the
+  loop, which forwards signals between polls; the next poll is the retry. While Connected in
+  fetched mode the hub's version is checked every `WG_VERSION_POLL_SECS`; a new tag whose bundle
+  changes this spoke's entry is applied in place, field by field, without the interface going
+  down; one whose bundle drops this spoke ends the run: `/fail`, SIGINT to the app (30 s, then
+  SIGKILL), `wg0` down, exit 75. After `WG_DISCONNECTED_LIMIT_SECS` of continuous Disconnected
+  the supervisor asks the app over the consent socket (`may-shutdown wireguard-disconnected
+  <n>s`, one line; only a literal `hold` back within 60 s postpones, asked again 60 s later;
+  `WG_HOLD_LIMIT_SECS` above zero caps the holding) and then proceeds the same way, exit 75. A
+  local command failing at runtime (Broken) stops the app with SIGTERM (30 s, then SIGKILL),
+  brings `wg0` down, sends `/fail` and exits 1. Under `WG_TOLERATE_DISCONNECTED=1` there is
+  no give-up. The heartbeat files and the ping are as before: while the handshake is fresh the
+  tunnel's file is written; then every file the supervisor is responsible for is checked and it
+  pings `/start` once when every file is first fresh, plain on every fresh poll, `/fail` with the
+  reason on the transition to stale and with the code on a nonzero child exit. The URL is
   `ALERTS_HEALTHCHECK_PING_URL`, else `https://hc-ping.com/<PINGKEY>/<HEARTBEAT_SLUG>` with
   `?create=1`; the request goes out in-process over TLS (rustls, Mozilla's roots) on a thread,
   with a 10 s timeout, best-effort, one log line per failure. Without a URL, or a key with a
