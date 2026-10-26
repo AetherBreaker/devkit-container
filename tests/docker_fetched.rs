@@ -279,13 +279,22 @@ fn fetched_mode_boots_from_the_hub_release_re_applies_in_place_asks_before_givin
   });
   let log = logs(&tolerated);
   assert!(log.contains("starting Disconnected") && log.contains("not enrolled"), "{log}");
-  // Healthy with no tunnel: the app beats every second from just after its report.
-  let hc = healthcheck(&tolerated);
-  let stderr = String::from_utf8_lossy(&hc.stderr);
-  assert!(hc.status.success(), "{stderr}");
+  // Healthy with no tunnel. Waited for: the app's first beat can trail its report. Each failed
+  // check's stderr is printed, so a timeout shows the last reason beside the docker logs.
+  wait_for("the tolerated container healthy", Duration::from_secs(30), &[&tolerated], || {
+    let hc = healthcheck(&tolerated);
+    if !hc.status.success() {
+      eprintln!("healthcheck: {}", String::from_utf8_lossy(&hc.stderr).trim());
+    }
+    hc.status.success()
+  });
+  // The check names the tunnel's file, which the boot removed and never rewrote (never
+  // Connected): the switch is what skipped it.
   assert!(
-    !stderr.contains("wireguard-heartbeat.txt"),
-    "under the switch the healthcheck judges the app's file alone"
+    !exec(&tolerated, &["test", "-e", "/app/persisted_data/logs/wireguard-heartbeat.txt"])
+      .status
+      .success(),
+    "no tunnel file"
   );
   ok(&mut docker(&["rm", "-f", &tolerated]));
   ok(&mut docker(&["volume", "rm", "-f", &guard.volume]));
