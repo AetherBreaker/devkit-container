@@ -95,7 +95,8 @@ fn main() -> ExitCode {
       } else {
         files
       };
-      let tolerate = std::env::var("WG_TOLERATE_DISCONNECTED").as_deref() == Ok("1");
+      // Trimmed as `run` reads it, so a padded `1` that boots tolerated also skips the tunnel file.
+      let tolerate = std::env::var("WG_TOLERATE_DISCONNECTED").is_ok_and(|v| v.trim() == "1");
       return ExitCode::from(healthcheck::run(&files, max_age, tolerate));
     }
     #[cfg(unix)]
