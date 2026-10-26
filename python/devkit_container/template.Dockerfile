@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Builder stage ----
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS builder
 
 WORKDIR /app
 
@@ -17,6 +17,11 @@ ENV UV_LINK_MODE=copy
 # Install git (required for uv to fetch git-based dependencies)
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
+
+# Project additions before the first sync: system packages dependencies need to compile.
+# The repo isn't cloned yet, so a file this needs is COPYed from the build context.
+# !window builder-setup:
+# !end builder-setup
 
 # Clone only the dependency manifest files first so the dep install layer
 # can be cached independently of source code changes.
@@ -60,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # !end builder
 
 # ---- Final stage ----
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
 # Setup a non-root user. /app stays root-owned: the code is read-only to the app, which
 # writes only to its mounted persisted dirs (or temp dirs).
