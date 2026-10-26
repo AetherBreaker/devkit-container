@@ -37,3 +37,19 @@ fn builder_setup_window_sits_between_the_git_install_and_the_clone() {
   );
   assert_eq!(close, open + 1, "the window ships empty");
 }
+
+#[test]
+fn builder_cached_window_sits_above_the_git_args() {
+  let t = template();
+  let at = |needle: &str| {
+    t.lines()
+      .position(|l| l.starts_with(needle))
+      .unwrap_or_else(|| panic!("{needle:?} missing"))
+  };
+  let workdir = at("WORKDIR /app");
+  let open = at("# !window builder-cached:");
+  let close = at("# !end builder-cached");
+  let arg = at("ARG GIT_TAG");
+  assert!(workdir < open && open < close && close < arg, "{workdir} {open} {close} {arg}");
+  assert_eq!(close, open + 1, "the window ships empty");
+}
