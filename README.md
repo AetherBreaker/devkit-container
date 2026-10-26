@@ -79,17 +79,17 @@ itself.
   (naming the key to enrol; then redeploy), `endpoint unresolvable`, and no handshake in time.
   `WG_TOLERATE_DISCONNECTED=1` runs anyway, Disconnected, for an emergency where a connection
   cannot happen for an external reason, or permanently, for an app that must keep working
-  offline (a time clock); the `healthcheck` subcommand then judges the app's file alone; a local
-  failure (Broken) is exit 1 either way.
+  offline (a time clock); the `healthcheck` subcommand then judges the app's file alone. A local
+  failure (Broken) is exit 1 with or without the switch.
 
   Every `WG_POLL_SECS` the supervisor reads `wg show wg0 latest-handshakes`: younger than
   `WG_STALE_SECS` is Connected (the tunnel heartbeat written, the disconnected clock reset);
   else Disconnected, with the repair alternating between re-setting the endpoint (re-resolving
-  its name) and taking `wg0` down and up, the first re-up of a disconnection logged, then at most
-  once an hour with the count since, and in fetched mode a version check each poll, because a
-  hub change is a common cause. While Connected in fetched mode the hub's
-  version is checked every `WG_VERSION_POLL_SECS`; a new tag whose bundle changes this spoke's
-  entry is applied in place, field by field, without the interface going down; one whose bundle
+  its name) and taking `wg0` down and up, the first re-up of a disconnection logged, then
+  at most once an hour with the count since, and in fetched mode a version check each poll,
+  because a hub change is a common cause. While Connected in fetched mode the hub's version
+  is checked every `WG_VERSION_POLL_SECS`; a new tag whose bundle changes this spoke's entry
+  is applied in place, field by field, without the interface going down; one whose bundle
   drops this spoke ends the run: `/fail`, SIGINT to the app (30 s, then SIGKILL), `wg0` down,
   exit 75. After `WG_DISCONNECTED_LIMIT_SECS` of continuous Disconnected the supervisor asks the
   app over the consent socket (`may-shutdown wireguard-disconnected <n>s`, one line; only a
@@ -182,8 +182,9 @@ mount, so another container mounting the same path read-only can check them.
 ## Tests
 
 `cargo test` covers the parsers, the heartbeat files, the ping URLs, the `WG_*` contract, the
-stale-and-re-up rule, the ping decision and the `healthcheck` subcommand; on Linux as root, the
-entrypoint. The smoke tests (`cargo test --test docker_smoke --test docker_supervisor -- --ignored
+stale-and-re-up rule, the ping decision, the `healthcheck` subcommand and the Dockerfile
+template's shape (both stages on trixie, the `builder-setup` window between the `git` install
+and the clone); on Linux as root, the entrypoint. The smoke tests (`cargo test --test docker_smoke --test docker_supervisor -- --ignored
 --nocapture`; CI runs them) build the wheel inside the official maturin container (a manylinux
 wheel, as a release builds one; the host needs Docker and nothing else), build the template
 Dockerfile around a scratch app with that wheel installed into the venv, and start it on a named
@@ -205,8 +206,8 @@ three releases (the test spoke enrolled at two addresses, then dropped), and the
 pairs as constants in the source. It reads `DEVKIT_SMOKE_WG_HUB_TOKEN` from the environment (CI:
 a repository secret) and refuses to run without it. Asserts the boot fetch and the cache, a
 refused start when not enrolled or without a hub, the same boot tolerated under
-`WG_TOLERATE_DISCONNECTED=1`, the in-place re-apply without the interface going down, the consent
-hold and ok before exit 75, and the removal shutdown. The wireguard tests need the host kernel's
+`WG_TOLERATE_DISCONNECTED=1` and healthy on the app's file alone, the in-place re-apply without
+the interface going down, the consent hold and ok before exit 75, and the removal shutdown. The wireguard tests need the host kernel's
 wireguard module (`sudo modprobe wireguard`). `ci/render.sh` dry-runs `setup-project` on a scratch project holding this checkout's
 wheel, with the mode off and on, so both templates meet the released devkit's parser before a
 release; a render error fails it.
