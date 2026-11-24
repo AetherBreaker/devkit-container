@@ -186,7 +186,7 @@ pub fn judge(check: &Check, report: Option<&Report>, written_at: jiff::Timestamp
 }
 
 /// What the Docker probe prints: one line per problem, none when healthy. Without declarations the
-/// app is judged as before, unless it has missed the deadline the supervisor set at boot. An
+/// app is judged as before, unless it has missed the deadline `run` wrote at the app's start. An
 /// unreadable report fails whatever the clock says, as the supervisor's `Watch` treats it.
 pub fn probe(dir: &Path, now: jiff::Timestamp) -> Vec<String> {
   let declarations = match read_declarations(dir) {
@@ -275,13 +275,17 @@ impl Watch {
         }
       }
     }
-    // Unreadable declarations count as not declared, so a broken file can't dodge the deadline.
+    // Unreadable declarations count as not declared, so a broken file can't dodge the deadline;
+    // the alert then says why they didn't count.
     let Some(declarations) = &self.declarations else {
       if let Some(secs) = self
         .timeout_secs
         .filter(|&s| now.as_second() - self.started.as_second() >= s as i64)
       {
-        let message = format!("health checks not declared within {secs} s");
+        let message = match &self.declarations_error {
+          Some(reason) => format!("health checks not declared within {secs} s ({reason})"),
+          None => format!("health checks not declared within {secs} s"),
+        };
         verdict.alerts.push(message.clone());
         verdict.stop = Some(message);
       }
@@ -587,16 +591,27 @@ mod tests {
     let mut watch = Watch::new(Some(300), at("2026-11-23T14:00:00Z"));
     assert_eq!(watch.poll(d, at("2026-11-23T14:04:59Z")), Verdict::default());
     assert_eq!(watch.poll(d, at("2026-11-23T14:05:00Z")), missed);
-    // Unreadable declarations count as not declared, and still log their reason once.
+    // Unreadable declarations count as not declared, log their reason once and name it in the alert.
     write(d, DECLARATIONS, "{");
     let reason = read_declarations(d).unwrap_err();
-    let verdict = watch.poll(d, at("2026-11-23T14:05:30Z"));
+    let message = format!("health checks not declared within 300 s ({reason})");
     assert_eq!(
-      verdict,
+      watch.poll(d, at("2026-11-23T14:05:30Z")),
       Verdict {
+        withheld: false,
+        alerts: vec![message.clone()],
+        stop: Some(message.clone()),
         log: vec![reason],
-        ..missed
       }
+    );
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:05:40Z")),
+      Verdict {
+        alerts: vec![message.clone()],
+        stop: Some(message),
+        ..Verdict::default()
+      },
+      "logged once, named on every poll"
     );
     // Review Focus 4: even an empty table satisfies the deadline.
     write(
