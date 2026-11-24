@@ -1,6 +1,6 @@
 //! The supervising entrypoint: the daemons spawned as root, the app as 999 with nothing kept,
 //! signals forwarded, zombies reaped, any daemon's exit ending the run, and every `WG_POLL_SECS` the tunnel assessed (spec 5.3), repaired (5.6) or
-//! re-applied (5.5), its heartbeat written, every heartbeat file adjudicated and the ping sent.
+//! re-applied (5.5), its heartbeat written, every heartbeat file and declared health check adjudicated and the ping sent.
 //! Fetches and consent asks run on worker threads; the loop only ever waits on its waker.
 
 use std::path::PathBuf;
@@ -101,7 +101,7 @@ pub mod unix {
   use crate::ping::{self, Kind};
   use crate::prepare::NONROOT;
   use crate::wireguard::{ApplyError, SECRET_VARS};
-  use crate::{cache, consent, heartbeat};
+  use crate::{cache, checks, consent, heartbeat};
 
   /// The loop's wake-up (spec 5.2 step 7): a socket pair the signal handlers write a byte to,
   /// so a signal or the child's exit (SIGCHLD) ends the wait at once instead of at the next
@@ -172,6 +172,9 @@ pub mod unix {
     GiveUp { elapsed: u64, reason: Reason, hold_limit: bool },
     /// The hub's newest bundle dropped this spoke (5.5): /fail, SIGINT, down, exit 75.
     Removed(String),
+    /// A `shutdown` check stalled, or the declarations missed their deadline: /fail with
+    /// `alerts` (none without), SIGTERM, down, exit 1.
+    Health { reason: String, alerts: Vec<String> },
   }
 
   /// The tunnel side of the loop: the health machine, the worker threads and their results.
@@ -464,8 +467,11 @@ pub mod unix {
       log,
       tunnel,
       daemons,
-      health_timeout_secs: _health_timeout_secs,
+      health_timeout_secs,
     } = plan;
+    // The deadline counts from here, after the startup scripts: never earlier than the probe's
+    // `declare-by.txt`, which `run` wrote before them.
+    let mut watch = checks::Watch::new(health_timeout_secs, jiff::Timestamp::now());
     let root = getuid().is_root();
     // Only the tunnel and the daemons (root, so only root can signal them) need root later;
     // without either drop now, and the child inherits 999.
@@ -505,6 +511,7 @@ pub mod unix {
     let logs = heartbeat::logs_dir(&app_root);
     let app_beat = logs.join(heartbeat::APP_FILE);
     let tunnel_beat = logs.join(heartbeat::TUNNEL_FILE);
+    let health_dir = checks::dir(&app_root);
     let agent = ping::agent();
     let mut pinger = Pinger::default();
     let mut inflight: Option<JoinHandle<()>> = None;
@@ -597,7 +604,8 @@ pub mod unix {
         stop(live, &app.into_iter().chain(rest).collect::<Vec<_>>(), &waker);
       }
     };
-    // Set by a forwarded SIGTERM or SIGINT: a daemon exiting after it is no failure.
+    // Set by a forwarded SIGTERM or SIGINT: a daemon exiting after it is no failure, and the
+    // app's checks are no longer judged, so a stopping app can't alert or start a second stop.
     let mut stopping = false;
 
     loop {
@@ -662,13 +670,31 @@ pub mod unix {
           if let Err(r) = heartbeat::check(&app_beat, heartbeat::DEFAULT_MAX_AGE_SECS, now) {
             reasons.push(r);
           }
-          match pinger.decide(reasons.is_empty(), false) {
-            Some(Kind::Fail) => {
-              log.line(&format!("unhealthy: {}", reasons.join("; ")));
-              send(&mut inflight, Kind::Fail, &reasons.join("\n"));
+          let verdict = if stopping {
+            checks::Verdict::default()
+          } else {
+            watch.poll(&health_dir, now)
+          };
+          for line in &verdict.log {
+            log.line(line);
+          }
+          if let Some(reason) = verdict.stop {
+            exit = Some(Exit::Health {
+              reason,
+              alerts: verdict.alerts,
+            });
+          } else {
+            let kind = pinger.decide(reasons.is_empty(), verdict.withheld);
+            // One request per poll, since `send` skips while one is in flight: a core /fail and
+            // the alerts share one body, which replaces the plain ping.
+            let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
+            body.extend(verdict.alerts);
+            if !body.is_empty() {
+              log.line(&format!("unhealthy: {}", body.join("; ")));
+              send(&mut inflight, Kind::Fail, &body.join("\n"));
+            } else if let Some(kind) = kind {
+              send(&mut inflight, kind, "");
             }
-            Some(kind) => send(&mut inflight, kind, ""),
-            None => {}
           }
         }
       }
@@ -715,6 +741,22 @@ pub mod unix {
             stop_all(&mut live, Signal::SIGINT);
             down();
             return Ok(75);
+          }
+          // A `shutdown` stall sends no /fail of its own (`fail_ping` adds one to `alerts`); an
+          // earlier poll's ping still in flight gets its chance to leave either way.
+          Exit::Health { reason, alerts } => {
+            log.line(&format!("health: {reason}; stopping the app"));
+            if alerts.is_empty() {
+              if let Some(h) = inflight.take() {
+                let _ = h.join();
+              }
+            } else {
+              log.line(&format!("unhealthy: {}", alerts.join("; ")));
+              send_now(&mut inflight, &alerts.join("\n"));
+            }
+            stop_all(&mut live, Signal::SIGTERM);
+            down();
+            return Ok(1);
           }
         }
       }
