@@ -692,9 +692,11 @@ pub mod unix {
           }
           let mut alerts = std::mem::take(&mut pending);
           alerts.extend(verdict.alerts);
-          // Alerts replace the poll's regular ping, so they withhold it: `/start` waits for the
-          // first poll that sends it, while `/fail` still tracks the core alone.
-          let kind = pinger.decide(reasons.is_empty(), verdict.withheld || !alerts.is_empty());
+          // Alerts replace the poll's regular ping, and a busy sender would skip it, so both
+          // withhold it: `/start` waits for the first poll that sends it, while `/fail` still
+          // tracks the core alone.
+          let sender_busy = ping.is_some() && inflight.as_ref().is_some_and(|h| !h.is_finished());
+          let kind = pinger.decide(reasons.is_empty(), verdict.withheld || !alerts.is_empty() || sender_busy);
           // One request per poll, since `send` skips while one is in flight: a core /fail and the
           // alerts share one body, which replaces the plain ping, or goes out from a stop's arm.
           let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
@@ -827,6 +829,13 @@ mod tests {
     assert_eq!(p.decide(false, true), Some(Kind::Fail), "a core stale transition still fails");
     assert_eq!(p.decide(false, false), None, "one /fail per outage");
     assert_eq!(p.decide(true, false), Some(Kind::Plain));
+  }
+
+  #[test]
+  fn a_start_withheld_for_a_busy_sender_goes_out_on_the_next_free_poll() {
+    let mut p = Pinger::default();
+    assert_eq!(p.decide(true, true), None, "sender busy: /start not consumed");
+    assert_eq!(p.decide(true, false), Some(Kind::Start));
   }
 
   #[cfg(unix)]
