@@ -122,12 +122,13 @@ No Python runs in the image outside the app itself.
   alerts), replacing that poll's plain ping; without `affects_ping`, a check that keeps sending
   failure pings flips healthchecks.io down and back up on each. Two stops end the run: a
   `shutdown` check stalling, and no valid `checks.json` within `health_checks_timeout_secs` of
-  the app's start (alert `health checks not declared within N s`). Either logs `health: <reason>; stopping the
-  app`, sends its alerts as one `/fail` (a `shutdown` stall sends none of its own; add
-  `fail_ping` for that), stops the app and the daemons with SIGTERM (30 s, then SIGKILL), brings
-  `wg0` down and exits 1, without the exit-code `/fail`. Once a `SIGTERM` or `SIGINT` has been
-  forwarded to the app its checks are no longer judged, so a stopping app sends no alerts and
-  starts no second stop. The URL is `ALERTS_HEALTHCHECK_PING_URL`, else
+  the app's start (alert `health checks not declared within N s`). Either logs `health:
+  <reason>; stopping the app`, sends that poll's `/fail` as usual, if it has one (a `shutdown`
+  stall adds no line of its own; add `fail_ping` for that), stops the app and the daemons with
+  SIGTERM (30 s, then SIGKILL), brings `wg0` down and exits 1, without the exit-code `/fail`.
+  Once a `SIGTERM` or `SIGINT` has been forwarded to the app its checks are no longer judged, so
+  a stopping app sends no alerts and starts no second stop, while a ping withheld at that point
+  stays withheld until the app exits. The URL is `ALERTS_HEALTHCHECK_PING_URL`, else
   `https://hc-ping.com/<PINGKEY>/<HEARTBEAT_SLUG>` with `?create=1`; the request goes out
   in-process over TLS (rustls, Mozilla's roots) on a thread, with a 10 s timeout, best-effort,
   one log line per failure. Without a URL, or a key with a slug, nothing pings and one line at
