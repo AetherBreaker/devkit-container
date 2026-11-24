@@ -173,7 +173,8 @@ pub mod unix {
     /// The hub's newest bundle dropped this spoke (5.5): /fail, SIGINT, down, exit 75.
     Removed(String),
     /// A `shutdown` check stalled, or the declarations missed their deadline: /fail with
-    /// `alerts` (none without), SIGTERM, down, exit 1.
+    /// `alerts` (that poll's core stale reasons, then the checks' alerts; none without),
+    /// SIGTERM, down, exit 1.
     Health { reason: String, alerts: Vec<String> },
   }
 
@@ -606,6 +607,9 @@ pub mod unix {
     // Set by a forwarded SIGTERM or SIGINT: a daemon exiting after it is no failure, and the
     // app's checks are no longer judged, so a stopping app can't alert or start a second stop.
     let mut stopping = false;
+    // The last judged `withheld`, kept while `stopping`, so a stop doesn't turn a held-down
+    // healthchecks.io back up.
+    let mut withheld = false;
 
     loop {
       for (flag, sig) in [(&term, Signal::SIGTERM), (&int, Signal::SIGINT), (&hup, Signal::SIGHUP)] {
@@ -670,30 +674,29 @@ pub mod unix {
             reasons.push(r);
           }
           let verdict = if stopping {
-            checks::Verdict::default()
+            checks::Verdict {
+              withheld,
+              ..checks::Verdict::default()
+            }
           } else {
             watch.poll(&health_dir, now)
           };
+          withheld = verdict.withheld;
           for line in &verdict.log {
             log.line(line);
           }
+          let kind = pinger.decide(reasons.is_empty(), verdict.withheld);
+          // One request per poll, since `send` skips while one is in flight: a core /fail and the
+          // alerts share one body, which replaces the plain ping, or goes out from a stop's arm.
+          let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
+          body.extend(verdict.alerts);
           if let Some(reason) = verdict.stop {
-            exit = Some(Exit::Health {
-              reason,
-              alerts: verdict.alerts,
-            });
-          } else {
-            let kind = pinger.decide(reasons.is_empty(), verdict.withheld);
-            // One request per poll, since `send` skips while one is in flight: a core /fail and
-            // the alerts share one body, which replaces the plain ping.
-            let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
-            body.extend(verdict.alerts);
-            if !body.is_empty() {
-              log.line(&format!("unhealthy: {}", body.join("; ")));
-              send(&mut inflight, Kind::Fail, &body.join("\n"));
-            } else if let Some(kind) = kind {
-              send(&mut inflight, kind, "");
-            }
+            exit = Some(Exit::Health { reason, alerts: body });
+          } else if !body.is_empty() {
+            log.line(&format!("unhealthy: {}", body.join("; ")));
+            send(&mut inflight, Kind::Fail, &body.join("\n"));
+          } else if let Some(kind) = kind {
+            send(&mut inflight, kind, "");
           }
         }
       }
