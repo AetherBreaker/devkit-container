@@ -265,3 +265,35 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
   let ahead = deadline.as_second() - jiff::Timestamp::now().as_second();
   assert!((290..=300).contains(&ahead), "the deadline is now + 300 s, got +{ahead}");
 }
+
+/// Needs root. A symlinked `persisted_data/logs` must stop `run` before it deletes or writes through it.
+#[cfg(unix)]
+#[test]
+#[ignore]
+fn as_root_refuses_a_symlinked_logs_folder_and_leaves_its_target_alone() {
+  let dir = tempfile::tempdir().unwrap();
+  let root = dir.path();
+  write(
+    root,
+    "pyproject.toml",
+    "[project.scripts]\nrun-app-demo = \"m:main\"\n[tool.docker]\nhealth_checks_timeout_secs = 300\n",
+  );
+  write(root, "outside/health/keep.txt", "x");
+  std::fs::create_dir_all(root.join("persisted_data")).unwrap();
+  std::os::unix::fs::symlink(root.join("outside"), root.join("persisted_data/logs")).unwrap();
+  let out = bin()
+    .args(["run", "--pyproject"])
+    .arg(root.join("pyproject.toml"))
+    .arg("--app-root")
+    .arg(root)
+    .output()
+    .unwrap();
+  assert_eq!(out.status.code(), Some(1));
+  let stderr = String::from_utf8_lossy(&out.stderr);
+  assert!(
+    stderr.contains("persisted_data/logs") && stderr.contains("is a symlink"),
+    "{stderr}"
+  );
+  assert!(root.join("outside/health/keep.txt").exists(), "the symlink target was touched");
+  assert!(!root.join("outside/health/declare-by.txt").exists());
+}
