@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 pub fn root() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap()
@@ -202,11 +203,18 @@ pub fn scratch_repo(work: &Path, wheel: &Path, app: &str, pyproject_tail: &str) 
 /// The maturin release that builds the wheel; the image carries its own Rust toolchain and gcc.
 pub const MATURIN_IMAGE: &str = "ghcr.io/pyo3/maturin:v1.15.0";
 
+/// Serializes `build_wheel` across the tests of one binary.
+static WHEEL_BUILD: Mutex<()> = Mutex::new(());
+
 /// The wheel the image installs, built from this checkout inside the maturin container: a
 /// manylinux wheel exactly as a release builds one, so no cross-compiling and no C toolchain
 /// on the host. Two named volumes keep the cargo registry and the target dir between runs
 /// (the host's `target/` is never written to); they are caches, so `Cleanup` leaves them.
 pub fn build_wheel(root: &Path, out: &Path) -> PathBuf {
+  // Tests in one binary run in parallel and every build shares the `devkit-container-target`
+  // volume as `CARGO_TARGET_DIR`; concurrent maturin builds race on it (missing artifacts). A
+  // poisoned lock is still a free lock: another test's panic must not fail this one.
+  let _guard = WHEEL_BUILD.lock().unwrap_or_else(|e| e.into_inner());
   // Created here so it is ours, not the container's root: the temp dir must stay removable.
   std::fs::create_dir_all(out).unwrap();
   // `root()` is canonical, which on Windows is a `\\?\` verbatim path Docker does not take.
