@@ -11,8 +11,8 @@ use crate::ping::{Kind, Ping};
 
 /// When to ping (spec 7): `/start` once when every file is first fresh, plain on every fresh
 /// poll after, `/fail` once on the transition to stale, plain again on recovery.
-/// `withheld` (an `affects_ping` check is failing, or an alert replaces the ping) silences plain and `/start`, but not a
-/// `/fail` for `core_fresh`.
+/// `withheld` (an `affects_ping` check is failing, or an alert replaces the ping) silences plain and
+/// `/start`, but not a `/fail` for `core_fresh`.
 #[derive(Debug, Default)]
 pub struct Pinger {
   started: bool,
@@ -520,12 +520,13 @@ pub mod unix {
     let exit_code: u8;
 
     // Off the loop's thread: a slow host must not delay signal forwarding or reaping. One in
-    // flight at a time, bounded by the agent's 10 s timeout.
-    let send = |inflight: &mut Option<JoinHandle<()>>, kind: Kind, body: &str| {
-      let Some(p) = &ping else { return };
+    // flight at a time, bounded by the agent's 10 s timeout. `false` means skipped; with no ping
+    // configured there is nothing to lose, so `true`.
+    let send = |inflight: &mut Option<JoinHandle<()>>, kind: Kind, body: &str| -> bool {
+      let Some(p) = &ping else { return true };
       if inflight.as_ref().is_some_and(|h| !h.is_finished()) {
         eprintln!("devkit-container: ping {kind:?} skipped: the previous one is still in flight");
-        return;
+        return false;
       }
       let (agent, url, body) = (agent.clone(), p.url(kind), body.to_string());
       *inflight = Some(std::thread::spawn(move || {
@@ -533,6 +534,7 @@ pub mod unix {
           eprintln!("devkit-container: ping {kind:?} failed: {e}");
         }
       }));
+      true
     };
     // The exit paths wait for the in-flight ping, then send theirs synchronously.
     let send_now = |inflight: &mut Option<JoinHandle<()>>, body: &str| {
@@ -610,6 +612,9 @@ pub mod unix {
     // The last judged `withheld`, kept while `stopping`, so a stop doesn't turn a held-down
     // healthchecks.io back up.
     let mut withheld = false;
+    // Alert lines of a /fail that `send` skipped: `watch` already counts them as sent, so the
+    // next poll's body leads with them. Core reasons aren't kept; the pinger fires them once.
+    let mut pending: Vec<String> = Vec::new();
 
     loop {
       for (flag, sig) in [(&term, Signal::SIGTERM), (&int, Signal::SIGINT), (&hup, Signal::SIGHUP)] {
@@ -685,20 +690,25 @@ pub mod unix {
           for line in &verdict.log {
             log.line(line);
           }
-          // Alerts replace the poll's regular ping, so they withhold it: `/start` waits for the first
-          // poll that sends it, while `/fail` still tracks the core alone.
-          let kind = pinger.decide(reasons.is_empty(), verdict.withheld || !verdict.alerts.is_empty());
+          let mut alerts = std::mem::take(&mut pending);
+          alerts.extend(verdict.alerts);
+          // Alerts replace the poll's regular ping, so they withhold it: `/start` waits for the
+          // first poll that sends it, while `/fail` still tracks the core alone.
+          let kind = pinger.decide(reasons.is_empty(), verdict.withheld || !alerts.is_empty());
           // One request per poll, since `send` skips while one is in flight: a core /fail and the
           // alerts share one body, which replaces the plain ping, or goes out from a stop's arm.
           let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
-          body.extend(verdict.alerts);
+          body.extend(alerts.iter().cloned());
           if let Some(reason) = verdict.stop {
             exit = Some(Exit::Health { reason, alerts: body });
           } else if !body.is_empty() {
             log.line(&format!("unhealthy: {}", body.join("; ")));
-            // `watch` already counts these alerts as sent, so a skip here loses them for good. Only
-            // possible with `WG_POLL_SECS` under the 10 s ping timeout; the core /fail has the same limit.
-            send(&mut inflight, Kind::Fail, &body.join("\n"));
+            // A skipped /fail keeps its alerts for the next poll. The core /fail is not kept (the
+            // pinger fires it once per outage), so it is lost; only possible with `WG_POLL_SECS`
+            // under the 10 s ping timeout.
+            if !send(&mut inflight, Kind::Fail, &body.join("\n")) {
+              pending = alerts;
+            }
           } else if let Some(kind) = kind {
             send(&mut inflight, kind, "");
           }
