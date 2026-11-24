@@ -116,13 +116,17 @@ No Python runs in the image outside the app itself.
   `health_checks_timeout_secs`, reading `checks.json` until it parses and never again after.
   While an `affects_ping` check is failing (stalled, its latest ping a failure ping, or its state
   file unreadable) neither plain nor `/start` goes out, plain resuming on recovery; a stale file
-  still sends its `/fail`. Each new failure ping is an alert, whatever the flags, and so is each
-  stall of a `fail_ping` check. A poll sends at most one request, since only one may be in
-  flight: one `/fail` with a line per reason (the stale files on their transition, then the
-  alerts), replacing that poll's plain ping; without `affects_ping`, a check that keeps sending
-  failure pings flips healthchecks.io down and back up on each. Two stops end the run: a
+  still sends its `/fail`. Each new failure ping is an alert, whatever the flags, even one a
+  success ping overwrote before the poll (read from the state file's `last_failure`), and so is
+  each stall of a `fail_ping` check. The log gets a line for each stall, its end (`<name>:
+  recovered`) and each change of the withheld ping. A poll sends at most one request, since
+  only one may be in flight: one `/fail` with a line per reason (the stale files on their
+  transition, then the alerts), replacing that poll's plain ping; without `affects_ping`, a
+  check that keeps sending failure pings flips healthchecks.io down and back up on each. Two
+  stops end the run: a
   `shutdown` check stalling, and no valid `checks.json` within `health_checks_timeout_secs` of
-  the app's start (alert `health checks not declared within N s`). Either logs `health:
+  the app's start (alert `health checks not declared within N s`, followed by the reason in
+  parentheses when `checks.json` exists but is unreadable). Either logs `health:
   <reason>; stopping the app`, sends that poll's `/fail` as usual, if it has one (a `shutdown`
   stall adds no line of its own; add `fail_ping` for that), stops the app and the daemons with
   SIGTERM (30 s, then SIGKILL), brings `wg0` down and exits 1, without the exit-code `/fail`.
@@ -144,10 +148,10 @@ No Python runs in the image outside the app itself.
   the app's declared health checks under `--app-root` (`persisted_data/logs/health/`, below),
   rereading them on every probe: every declared check counts, whatever its flags, with one line
   per failing one (`<name>: <stall message> (no ping for N s)`, or `<name>: no ping for N s
-  (period P s + grace G s)` without a stall message; `<name>: <message>` after a failure ping;
-  or its state file unreadable), and unreadable declarations are one line. With no
-  `checks.json` it is healthy, unless `declare-by.txt` has passed (`health checks not declared
-  by <timestamp>`); with no `health/` folder it behaves as before.
+  (period P s + grace G s)` without a stall message; `<name>: <message>` after a failure ping,
+  `<name>: failure ping` without one; or its state file unreadable), and unreadable declarations
+  are one line. With no `checks.json` it is healthy, unless `declare-by.txt` has passed
+  (`health checks not declared by <timestamp>`); with no `health/` folder it behaves as before.
 
 ## `[tool.docker]` schema
 
@@ -219,13 +223,17 @@ mount, so another container mounting the same path read-only can check them.
   - `checks.json`: the declarations, written once, on the first ping of any check: `version`
     (1), `written_at`, and `checks`, a table keyed by name (`[a-z0-9][a-z0-9_-]{0,63}`, since it
     names the state file) of `period_secs` (1 to 31536000), `grace_secs` (0 to 31536000),
-    `stall_message` (a string or null) and the flags `affects_ping`, `fail_ping` and `shutdown`.
-    Anything that doesn't parse, an unknown `version` or a missing field makes it unreadable.
-  - `state/<name>.json`: that check's latest ping, `{"at": …, "failure": …, "message": …}`,
-    rewritten on every ping; one older than `written_at` is a previous run's and ignored. A
-    check stalls once no ping has landed for its period plus grace, counted from `written_at`
-    until its first ping; it is failing while stalled or while its latest ping is a failure
-    ping.
+    `stall_message` (a string, or null or empty for none) and the flags `affects_ping`,
+    `fail_ping` and `shutdown`. Anything that doesn't parse, an unknown `version`, an invalid
+    name, a period or grace out of range, or a missing or wrongly typed field makes it
+    unreadable.
+  - `state/<name>.json`: that check's latest ping, `{"at": …, "failure": …, "message": …,
+    "last_failure": …}`, rewritten on every ping (an empty `message` means none);
+    `last_failure` is `{"at": …, "message": …}`, the run's most recent failure ping of that
+    check, kept across success pings, or null (also when missing). One older than `written_at`
+    is a previous run's and ignored. A check stalls once no ping has landed for its period plus
+    grace, counted from `written_at` until its first ping; it is failing while stalled or while
+    its latest ping is a failure ping.
   - `declare-by.txt`: written by `run` with `health_checks_timeout_secs` set: the app's start
     plus the timeout, one timestamp.
 
@@ -251,10 +259,13 @@ after the app has exited), with the tunnel against a hub
 container built from the same image (handshake, the tunnel heartbeat fresh and readable, the
 secrets scrubbed, stale then re-upped when the hub forgets and re-learns the peer, the
 two-file healthcheck naming the file), and the ping against a local HTTP listener (`/start` once,
-plain, `/fail`). `docker_fetched` runs fetched mode against real GitHub: a hub container serving
-`/version` on the test network, the fixture repository `AetherBreaker/wireguard-hub-smoke` with
-three releases (the test spoke enrolled at two addresses, then dropped), and the test's own key
-pairs as constants in the source. The fixture is public, so it needs no token and takes the
+plain, `/fail`); a second image, without the mode, has a root daemon declare a never-pinged
+check with `fail_ping` and `shutdown`: exit 1, the `health: …; stopping the app` line, one
+`/fail` carrying the stall line and no exit-code `/fail`. `docker_fetched` runs fetched mode
+against real GitHub: a hub container serving `/version` on the test network, the fixture
+repository `AetherBreaker/wireguard-hub-smoke` with three releases (the test spoke enrolled at
+two addresses, then dropped), and the test's own key pairs as constants in the source. The
+fixture is public, so it needs no token and takes the
 public download; with `DEVKIT_SMOKE_WG_HUB_TOKEN` set it passes that as `WG_HUB_TOKEN` and takes
 the API path. Asserts the boot fetch and the cache, a
 refused start when not enrolled or without a hub, the same boot tolerated under
