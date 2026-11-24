@@ -1,6 +1,7 @@
 //! The app-declared health checks' file contract (an `aeth_ext` app writes it; the supervisor and
 //! the Docker probe read it): `health/checks.json` declares the checks, `health/state/<name>.json`
-//! holds each one's last ping. `judge` is the one rule deciding whether a check is healthy.
+//! holds each one's last ping and the run's last failure ping. `judge` is the one rule deciding
+//! whether a check is healthy.
 
 use std::{
   collections::BTreeMap,
@@ -43,6 +44,15 @@ pub struct Declarations {
 pub struct Report {
   pub at: jiff::Timestamp,
   pub failure: bool,
+  pub message: Option<String>,
+  /// The run's most recent failure ping, kept across success pings (the current one when it is a
+  /// failure), so a failure the next ping overwrote before a poll still reaches the supervisor.
+  pub last_failure: Option<Failure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+  pub at: jiff::Timestamp,
   pub message: Option<String>,
 }
 
@@ -118,10 +128,18 @@ pub fn parse_declarations(text: &str) -> Result<Declarations, String> {
 
 pub fn parse_report(text: &str) -> Result<Report, String> {
   let root: Value = serde_json::from_str(text).map_err(|_| "not JSON".to_string())?;
+  let last_failure = match root.get("last_failure") {
+    None | Some(Value::Null) => None,
+    Some(f) => Some(Failure {
+      at: timestamp(f, "at").map_err(|e| format!("last_failure.{e}"))?,
+      message: optional_message(f, "message").map_err(|e| format!("last_failure.{e}"))?,
+    }),
+  };
   Ok(Report {
     at: timestamp(&root, "at")?,
     failure: field(&root, "failure", "boolean", Value::is_boolean)?.as_bool().unwrap_or_default(),
     message: optional_message(&root, "message")?,
+    last_failure,
   })
 }
 
@@ -283,14 +301,18 @@ impl Watch {
           continue;
         }
       };
-      // A stall outranks a failure ping in `judge`, but the ping was still sent, so it alerts here.
-      if let Some(r) = report.as_ref().filter(|r| r.failure && r.at >= declarations.written_at)
-        && self.alerted.get(name) != Some(&r.at)
+      // From `last_failure`, not the latest ping, which a success may have overwritten since the
+      // last poll; and whatever `judge` says, since a stall outranks a failure ping there.
+      if let Some(f) = report
+        .as_ref()
+        .and_then(|r| r.last_failure.as_ref())
+        .filter(|f| f.at >= declarations.written_at)
+        && self.alerted.get(name) != Some(&f.at)
       {
-        self.alerted.insert(name.clone(), r.at);
+        self.alerted.insert(name.clone(), f.at);
         verdict
           .alerts
-          .push(format!("{name}: {}", r.message.as_deref().unwrap_or("failure ping")));
+          .push(format!("{name}: {}", f.message.as_deref().unwrap_or("failure ping")));
       }
       let judgment = judge(check, report.as_ref(), declarations.written_at, now);
       let stalled = matches!(judgment, Judgment::Stalled(_));
@@ -371,6 +393,29 @@ mod tests {
       (r.at, r.failure, r.message.as_deref()),
       (at("2026-11-23T14:05:00Z"), true, Some("mailbox unreadable"))
     );
+    assert_eq!(r.last_failure, None, "a missing last_failure is null");
+    let kept = parse_report(
+      r#"{"at": "2026-11-23T14:06:00Z", "failure": false, "message": null,
+          "last_failure": {"at": "2026-11-23T14:05:00Z", "message": "mailbox unreadable"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+      kept.last_failure,
+      Some(Failure {
+        at: at("2026-11-23T14:05:00Z"),
+        message: Some("mailbox unreadable".into())
+      })
+    );
+    for (bad, field) in [
+      (r#"{"message": null}"#, "last_failure.at"),
+      (r#"{"at": "yesterday", "message": null}"#, "last_failure.at"),
+      (r#"{"at": "2026-11-23T14:05:00Z", "message": 3}"#, "last_failure.message"),
+      ("true", "last_failure.at"),
+    ] {
+      let text = format!(r#"{{"at": "2026-11-23T14:06:00Z", "failure": false, "message": null, "last_failure": {bad}}}"#);
+      let err = parse_report(&text).unwrap_err();
+      assert!(err.starts_with(field), "{bad}: {err}");
+    }
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(read_report(dir.path(), "imap"), Ok(None));
     assert_eq!(read_declarations(dir.path()), Ok(None));
@@ -385,6 +430,7 @@ mod tests {
       at: at(s),
       failure: false,
       message: None,
+      last_failure: None,
     };
     // Not pinged yet: the clock starts at written_at; 720 s = period 600 + grace 120.
     assert_eq!(judge(imap, None, w, at("2026-11-23T14:11:59Z")), Judgment::Healthy);
@@ -410,6 +456,7 @@ mod tests {
       at: at("2026-11-23T14:01:00Z"),
       failure: true,
       message: m.map(Into::into),
+      last_failure: None,
     };
     assert_eq!(
       judge(imap, Some(&fail(Some("mailbox unreadable"))), w, at("2026-11-23T14:02:00Z")),
@@ -461,8 +508,16 @@ mod tests {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
   }
+  /// As the writer has it: a failure ping is its own `last_failure`.
   fn state(at: &str, failure: bool, message: Option<&str>) -> String {
-    serde_json::json!({"at": at, "failure": failure, "message": message}).to_string()
+    let last = failure.then(|| serde_json::json!({"at": at, "message": message}));
+    serde_json::json!({"at": at, "failure": failure, "message": message, "last_failure": last}).to_string()
+  }
+  /// A success ping that keeps an earlier failure as `last_failure`.
+  fn after_failure(at: &str, failed_at: &str, message: &str) -> String {
+    serde_json::json!({"at": at, "failure": false, "message": null,
+                       "last_failure": {"at": failed_at, "message": message}})
+    .to_string()
   }
   const STALL_IMAP: &str = "imap: IMAP server unresponsive (no ping for 720 s)";
   const STALL_HB: &str = "heartbeat: no ping for 180 s (period 60 s + grace 120 s)";
@@ -606,6 +661,40 @@ mod tests {
         ..same
       }
     );
+  }
+
+  #[test]
+  fn a_failure_ping_a_success_overwrote_before_the_poll_still_alerts_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write(d, DECLARATIONS, DECL);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:00Z")), Verdict::default());
+    // imap has no flags; its latest ping is a success, so it is judged healthy all along.
+    write(
+      d,
+      "state/imap.json",
+      &after_failure("2026-11-23T14:01:20Z", "2026-11-23T14:01:10Z", "mailbox unreadable"),
+    );
+    let alert = Verdict {
+      alerts: vec!["imap: mailbox unreadable".into()],
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:30Z")), alert);
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:40Z")), Verdict::default(), "alerted once");
+    write(
+      d,
+      "state/imap.json",
+      &after_failure("2026-11-23T14:01:55Z", "2026-11-23T14:01:50Z", "mailbox unreadable"),
+    );
+    assert_eq!(watch.poll(d, at("2026-11-23T14:02:00Z")), alert, "a newer failure alerts again");
+    // A last failure older than the declarations is a previous run's.
+    write(
+      d,
+      "state/heartbeat.json",
+      &after_failure("2026-11-23T14:02:05Z", "2026-11-23T13:59:00Z", "old run"),
+    );
+    assert_eq!(watch.poll(d, at("2026-11-23T14:02:10Z")), Verdict::default());
   }
 
   #[test]
