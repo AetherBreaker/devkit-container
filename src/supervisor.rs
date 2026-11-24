@@ -694,6 +694,8 @@ pub mod unix {
             exit = Some(Exit::Health { reason, alerts: body });
           } else if !body.is_empty() {
             log.line(&format!("unhealthy: {}", body.join("; ")));
+            // `watch` already counts these alerts as sent, so a skip here loses them for good. Only
+            // possible with `WG_POLL_SECS` under the 10 s ping timeout; the core /fail has the same limit.
             send(&mut inflight, Kind::Fail, &body.join("\n"));
           } else if let Some(kind) = kind {
             send(&mut inflight, kind, "");
