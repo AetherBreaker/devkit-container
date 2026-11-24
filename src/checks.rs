@@ -502,6 +502,28 @@ mod tests {
   }
 
   #[test]
+  fn an_empty_message_reads_as_none() {
+    // A blank message, collapsed by the writer, arrives as "".
+    let d = parse_declarations(&DECL.replace("\"IMAP server unresponsive\"", "\"\"")).unwrap();
+    let imap = &d.checks[1];
+    assert_eq!(
+      judge(imap, None, d.written_at, at("2026-11-23T14:12:00Z")),
+      Judgment::Stalled("imap: no ping for 720 s (period 600 s + grace 120 s)".into())
+    );
+    let failed = state("2026-11-23T14:01:00Z", true, Some(""));
+    let r = parse_report(&failed).unwrap();
+    assert_eq!(
+      judge(imap, Some(&r), d.written_at, at("2026-11-23T14:02:00Z")),
+      Judgment::Failing("imap: failure ping".into())
+    );
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), DECLARATIONS, DECL);
+    write(dir.path(), "state/imap.json", &failed);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(dir.path(), at("2026-11-23T14:01:10Z")).alerts, ["imap: failure ping"]);
+  }
+
+  #[test]
   fn the_probe_reports_one_line_per_problem() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
