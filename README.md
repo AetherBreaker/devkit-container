@@ -28,16 +28,20 @@ No Python runs in the image outside the app itself.
   script in `[project.scripts]` and every `[tool.docker].startup_scripts` name (each must be a
   `[project.scripts]` key); checks every `[tool.docker].required_persisted_dirs` entry is backed
   by a bind mount (the path or an ancestor below `/app`, per `/proc/self/mountinfo`) and refuses
-  to start otherwise; with `wireguard` on, boots the tunnel (below); `mkdir -p` + recursive chown
-  to `999:999` of the required dirs plus, implicitly, `persisted_data/logs` when supervising and
-  `persisted_data/wireguard` with `wireguard` on; runs the startup scripts as root, in order, in
-  `/app`, with the full environment, no arguments and no timeout (the first nonzero exit ends
-  the run with exit 1); removes `WG_PRIVATE_KEY`, `WG_PEER_PRESHARED_KEY`, `WG_HUB_TOKEN` and
-  every `[tool.docker].scrub_env` name from the app's environment; `setgroups([])`, `setgid`,
-  `setuid`; `exec /app/.venv/bin/<script>`. `/app` itself stays root-owned: the app writes only
-  to its mounted dirs or temp dirs. Entries that are empty, `.`, `..`, absolute or escape `/app`
-  are errors; a table still carrying `chown_paths`/`mkdirs` is refused with the migration hint.
-  Flags `--pyproject`, `--app-root`, `--mountinfo` exist for tests.
+  to start otherwise; with `wireguard` on, boots the tunnel (below); removes a leftover
+  `persisted_data/logs/health/`, supervised or not, so a previous run's health-check declarations
+  and pings never count for this one; `mkdir -p` + recursive chown to `999:999` of the required
+  dirs plus, implicitly, `persisted_data/logs` when supervising, `persisted_data/logs/health` with
+  `health_checks_timeout_secs` set and `persisted_data/wireguard` with `wireguard` on; with
+  `health_checks_timeout_secs` set, writes `health/declare-by.txt` (now plus the timeout); runs
+  the startup scripts as root, in order, in `/app`, with the full environment, no arguments and
+  no timeout (the first nonzero exit ends the run with exit 1); removes `WG_PRIVATE_KEY`,
+  `WG_PEER_PRESHARED_KEY`, `WG_HUB_TOKEN` and every `[tool.docker].scrub_env` name from the
+  app's environment; `setgroups([])`, `setgid`, `setuid`; `exec /app/.venv/bin/<script>`.
+  `/app` itself stays root-owned: the app writes only to its mounted dirs or temp dirs. Entries
+  that are empty, `.`, `..`, absolute or escape `/app` are errors; a table still carrying
+  `chown_paths`/`mkdirs` is refused with the migration hint. Flags `--pyproject`, `--app-root`,
+  `--mountinfo` exist for tests.
 
   With `[tool.docker].supervise`, `wireguard` or `daemons` on, the last step is a branch instead of the
   exec: the app is spawned as 999:999 with empty supplementary groups and empty capability sets,
@@ -101,14 +105,32 @@ No Python runs in the image outside the app itself.
   `WG_HOLD_LIMIT_SECS` above zero caps the holding) and then proceeds the same way, exit 75. A
   local command failing at runtime (Broken) stops the app with SIGTERM (30 s, then SIGKILL),
   brings `wg0` down, sends `/fail` and exits 1. Under `WG_TOLERATE_DISCONNECTED=1` there is
-  no give-up. The heartbeat files and the ping are as before: while the handshake is fresh the
-  tunnel's file is written; then every file the supervisor is responsible for is checked and it
-  pings `/start` once when every file is first fresh, plain on every fresh poll, `/fail` with the
-  reason on the transition to stale and with the code on a nonzero child exit. The URL is
-  `ALERTS_HEALTHCHECK_PING_URL`, else `https://hc-ping.com/<PINGKEY>/<HEARTBEAT_SLUG>` with
-  `?create=1`; the request goes out in-process over TLS (rustls, Mozilla's roots) on a thread,
-  with a 10 s timeout, best-effort, one log line per failure. Without a URL, or a key with a
-  slug, nothing pings and one line at start says so.
+  no give-up.
+
+  The heartbeat files and the ping, on every poll, tunnel or not: while the handshake is fresh
+  the tunnel's file is written; then every file the supervisor is responsible for is checked and
+  it pings `/start` once when every file is first fresh, plain on every fresh poll, `/fail` with
+  the reason on the transition to stale and with the code on a nonzero child exit. The same poll
+  judges the app's declared health checks (`health/`, below), with or without
+  `health_checks_timeout_secs`, reading `checks.json` until it parses and never again after.
+  While an `affects_ping` check is failing (stalled, its latest ping a failure ping, or its state
+  file unreadable) neither plain nor `/start` goes out, plain resuming on recovery; a stale file
+  still sends its `/fail`. Each new failure ping is an alert, whatever the flags, and so is each
+  stall of a `fail_ping` check. A poll sends at most one request, since only one may be in
+  flight: one `/fail` with a line per reason (the stale files on their transition, then the
+  alerts), replacing that poll's plain ping; without `affects_ping`, a check that keeps sending
+  failure pings flips healthchecks.io down and back up on each. Two stops end the run: a
+  `shutdown` check stalling, and no valid `checks.json` within `health_checks_timeout_secs`
+  (alert `health checks not declared within N s`). Either logs `health: <reason>; stopping the
+  app`, sends its alerts as one `/fail` (a `shutdown` stall sends none of its own; add
+  `fail_ping` for that), stops the app and the daemons with SIGTERM (30 s, then SIGKILL), brings
+  `wg0` down and exits 1, without the exit-code `/fail`. Once a `SIGTERM` or `SIGINT` has been
+  forwarded to the app its checks are no longer judged, so a stopping app sends no alerts and
+  starts no second stop. The URL is `ALERTS_HEALTHCHECK_PING_URL`, else
+  `https://hc-ping.com/<PINGKEY>/<HEARTBEAT_SLUG>` with `?create=1`; the request goes out
+  in-process over TLS (rustls, Mozilla's roots) on a thread, with a 10 s timeout, best-effort,
+  one log line per failure. Without a URL, or a key with a slug, nothing pings and one line at
+  start says so.
 - `healthcheck` exits 0 when every heartbeat file is fresh, else 1 with one line on stderr per
   problem (missing, empty, not an ISO 8601 timestamp, stale by N s), which is what `docker
   inspect` shows. `--file PATH` is repeatable (default: the app's file under `--app-root`);
@@ -116,7 +138,14 @@ No Python runs in the image outside the app itself.
   pyproject parse, no dependence on the supervisor. A bare timestamp (no offset) is read as
   container-local time. Under `WG_TOLERATE_DISCONNECTED=1` a `--file` named
   `wireguard-heartbeat.txt` is skipped, so a spoke running offline stays healthy while its app
-  is; the supervisor still sends `/fail` when the tunnel goes stale.
+  is; the supervisor still sends `/fail` when the tunnel goes stale. After the files it judges
+  the app's declared health checks under `--app-root` (`persisted_data/logs/health/`, below),
+  rereading them on every probe: every declared check counts, whatever its flags, with one line
+  per failing one (`<name>: <stall message> (no ping for N s)`, or `<name>: no ping for N s
+  (period P s + grace G s)` without a stall message; `<name>: <message>` after a failure ping;
+  or its state file unreadable), and unreadable declarations are one line. With no
+  `checks.json` it is healthy, unless `declare-by.txt` has passed (`health checks not declared
+  by <timestamp>`); with no `health/` folder it behaves as before.
 
 ## `[tool.docker]` schema
 
@@ -131,6 +160,7 @@ No Python runs in the image outside the app itself.
 | `scrub_env` | variable names removed from the app's environment on top of the built-in secrets; default empty |
 | `daemons` | commands, each a list of the program (a path, or a name found on `PATH`) and its arguments, that `run` starts as root after the startup scripts and supervises beside the app; implies `supervise`; default empty |
 | `stop_daemons_after_app` | stop the app first and the daemons only once it has exited, Docker's stop included; refused without `daemons`; off by default |
+| `health_checks_timeout_secs` | seconds from the start within which the app must write its health-check declarations (`health/checks.json`); past it `healthcheck` fails and, when supervised, the supervisor alerts and stops the app, exit 1; 1 to 31536000; does not turn on `supervise`; absent by default, meaning no deadline |
 
 `chown_paths` and `mkdirs` are legacy keys the entrypoint refuses.
 
@@ -182,6 +212,20 @@ mount, so another container mounting the same path read-only can check them.
   after every successful fetch, read at boot when the hub's version endpoint or GitHub is
   unreachable. Holds no secrets.
 - `logs/devkit-container.log`: the binary's own lines, timestamped, appended one at a time.
+- `health/`, the app's declared health checks: written atomically, by `aeth_ext` unless noted;
+  judged by `healthcheck` and the supervisor; removed by `run` at every start.
+  - `checks.json`: the declarations, written once, on the first ping of any check: `version`
+    (1), `written_at`, and `checks`, a table keyed by name (`[a-z0-9][a-z0-9_-]{0,63}`, since it
+    names the state file) of `period_secs` (1 to 31536000), `grace_secs` (0 to 31536000),
+    `stall_message` (a string or null) and the flags `affects_ping`, `fail_ping` and `shutdown`.
+    Anything that doesn't parse, an unknown `version` or a missing field makes it unreadable.
+  - `state/<name>.json`: that check's latest ping, `{"at": …, "failure": …, "message": …}`,
+    rewritten on every ping; one older than `written_at` is a previous run's and ignored. A
+    check stalls once no ping has landed for its period plus grace, counted from `written_at`
+    until its first ping; it is failing while stalled or while its latest ping is a failure
+    ping.
+  - `declare-by.txt`: written by `run` with `health_checks_timeout_secs` set: the start plus the
+    timeout, one timestamp.
 
 ## Tests
 
