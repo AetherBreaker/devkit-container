@@ -92,7 +92,7 @@ fn healthcheck_fails_with_the_apps_stall_message() {
     &logs,
     "health/checks.json",
     &format!(
-      r#"{{"version": 1, "written_at": "{hour_ago}", "checks": {{"imap": {{"period_secs": 1, "grace_secs": 1,
+      r#"{{"version": 1, "written_at": "{hour_ago}", "checks": {{"imap": {{"period_secs": 1, "grace_secs": 0,
       "stall_message": "IMAP server unresponsive", "affects_ping": false, "fail_ping": false, "shutdown": false}}}}}}"#
     ),
   );
