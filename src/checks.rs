@@ -2,7 +2,10 @@
 //! the Docker probe read it): `health/checks.json` declares the checks, `health/state/<name>.json`
 //! holds each one's last ping. `judge` is the one rule deciding whether a check is healthy.
 
-use std::path::{Path, PathBuf};
+use std::{
+  collections::BTreeMap,
+  path::{Path, PathBuf},
+};
 
 use serde_json::Value;
 
@@ -192,6 +195,121 @@ pub fn probe(dir: &Path, now: jiff::Timestamp) -> Vec<String> {
     .collect()
 }
 
+/// What one supervisor poll found; the caller logs `log`, sends one `/fail` joining `alerts`,
+/// skips the plain ping when `withheld`, and stops the app when `stop` is set.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))] // only the Unix supervisor polls
+pub struct Verdict {
+  pub withheld: bool,
+  pub alerts: Vec<String>,
+  pub stop: Option<String>,
+  pub log: Vec<String>,
+}
+
+/// The supervisor's memory across polls: the cached declarations plus what already fired, so each
+/// failure ping and each stall episode alerts once.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub struct Watch {
+  timeout_secs: Option<u64>,
+  started: jiff::Timestamp,
+  declarations: Option<Declarations>,
+  /// Last reason declarations were unreadable, so a repeat isn't logged every poll.
+  declarations_error: Option<String>,
+  /// Per check: the last unreadable-state reason, cleared when it reads again.
+  state_errors: BTreeMap<String, String>,
+  /// Per check: stalled as of the last judgment; absent before the first, which counts as not stalled.
+  stalled: BTreeMap<String, bool>,
+  /// Per check: the `at` of the last failure ping alerted on.
+  alerted: BTreeMap<String, jiff::Timestamp>,
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+impl Watch {
+  pub fn new(timeout_secs: Option<u64>, started: jiff::Timestamp) -> Watch {
+    Watch {
+      timeout_secs,
+      started,
+      declarations: None,
+      declarations_error: None,
+      state_errors: BTreeMap::new(),
+      stalled: BTreeMap::new(),
+      alerted: BTreeMap::new(),
+    }
+  }
+
+  /// Declarations are read until one parses, then never again (the app writes them once per boot).
+  pub fn poll(&mut self, dir: &Path, now: jiff::Timestamp) -> Verdict {
+    let mut verdict = Verdict::default();
+    if self.declarations.is_none() {
+      match read_declarations(dir) {
+        Ok(found) => {
+          self.declarations = found;
+          self.declarations_error = None;
+        }
+        Err(reason) => {
+          if self.declarations_error.as_ref() != Some(&reason) {
+            verdict.log.push(reason.clone());
+          }
+          self.declarations_error = Some(reason);
+        }
+      }
+    }
+    // Unreadable declarations count as not declared, so a broken file can't dodge the deadline.
+    let Some(declarations) = &self.declarations else {
+      if let Some(secs) = self
+        .timeout_secs
+        .filter(|&s| now.as_second() - self.started.as_second() >= s as i64)
+      {
+        let message = format!("health checks not declared within {secs} s");
+        verdict.alerts.push(message.clone());
+        verdict.stop = Some(message);
+      }
+      return verdict;
+    };
+    for check in &declarations.checks {
+      let name = &check.name;
+      let report = match read_report(dir, name) {
+        Ok(report) => {
+          self.state_errors.remove(name);
+          report
+        }
+        // Failing but never stalled, as in `probe`; the stalled flag stays as it was so an
+        // unreadable poll in the middle of an episode doesn't start a new one.
+        Err(reason) => {
+          if self.state_errors.insert(name.clone(), reason.clone()).as_ref() != Some(&reason) {
+            verdict.log.push(format!("{name}: state unreadable ({reason})"));
+          }
+          verdict.withheld |= check.affects_ping;
+          continue;
+        }
+      };
+      // A stall outranks a failure ping in `judge`, but the ping was still sent, so it alerts here.
+      if let Some(r) = report.as_ref().filter(|r| r.failure && r.at >= declarations.written_at)
+        && self.alerted.get(name) != Some(&r.at)
+      {
+        self.alerted.insert(name.clone(), r.at);
+        verdict
+          .alerts
+          .push(format!("{name}: {}", r.message.as_deref().unwrap_or("failure ping")));
+      }
+      let judgment = judge(check, report.as_ref(), declarations.written_at, now);
+      let stalled = matches!(judgment, Judgment::Stalled(_));
+      verdict.withheld |= check.affects_ping && judgment != Judgment::Healthy;
+      if self.stalled.insert(name.clone(), stalled) != Some(true)
+        && let Judgment::Stalled(reason) = judgment
+      {
+        if check.fail_ping {
+          verdict.alerts.push(reason.clone());
+        }
+        if check.shutdown {
+          verdict.stop.get_or_insert(reason);
+        }
+      }
+    }
+    verdict
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -336,5 +454,245 @@ mod tests {
     assert!(lines[0].starts_with("imap: ") && lines[0].contains("unreadable"), "{lines:?}");
     std::fs::write(d.join(DECLARATIONS), "{").unwrap();
     assert!(probe(d, now)[0].contains("not JSON"));
+  }
+
+  fn write(dir: &Path, rel: &str, text: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+  }
+  fn state(at: &str, failure: bool, message: Option<&str>) -> String {
+    serde_json::json!({"at": at, "failure": failure, "message": message}).to_string()
+  }
+  const STALL_IMAP: &str = "imap: IMAP server unresponsive (no ping for 720 s)";
+  const STALL_HB: &str = "heartbeat: no ping for 180 s (period 60 s + grace 120 s)";
+
+  #[test]
+  fn declarations_are_cached_once_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:00:30Z")), Verdict::default());
+    write(d, DECLARATIONS, "{");
+    let reason = read_declarations(d).unwrap_err();
+    let verdict = watch.poll(d, at("2026-11-23T14:01:00Z"));
+    assert_eq!(
+      verdict,
+      Verdict {
+        log: vec![reason],
+        ..Verdict::default()
+      }
+    );
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:01:30Z")),
+      Verdict::default(),
+      "same reason is not logged again"
+    );
+    write(d, DECLARATIONS, DECL);
+    assert_eq!(watch.poll(d, at("2026-11-23T14:02:00Z")), Verdict::default());
+    write(d, DECLARATIONS, "{");
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:02:30Z")),
+      Verdict::default(),
+      "cached: never read again"
+    );
+  }
+
+  #[test]
+  fn the_deadline_alerts_and_stops_only_when_nothing_was_declared() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let message = "health checks not declared within 300 s".to_string();
+    let missed = Verdict {
+      alerts: vec![message.clone()],
+      stop: Some(message),
+      ..Verdict::default()
+    };
+    let mut watch = Watch::new(Some(300), at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:04:59Z")), Verdict::default());
+    assert_eq!(watch.poll(d, at("2026-11-23T14:05:00Z")), missed);
+    // Unreadable declarations count as not declared, and still log their reason once.
+    write(d, DECLARATIONS, "{");
+    let reason = read_declarations(d).unwrap_err();
+    let verdict = watch.poll(d, at("2026-11-23T14:05:30Z"));
+    assert_eq!(
+      verdict,
+      Verdict {
+        log: vec![reason],
+        ..missed
+      }
+    );
+    // Review Focus 4: even an empty table satisfies the deadline.
+    write(
+      d,
+      DECLARATIONS,
+      r#"{"version": 1, "written_at": "2026-11-23T14:00:00Z", "checks": {}}"#,
+    );
+    assert_eq!(watch.poll(d, at("2026-11-23T14:06:00Z")), Verdict::default());
+    assert_eq!(watch.poll(d, at("2026-11-23T15:00:00Z")), Verdict::default());
+    let mut no_deadline = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(no_deadline.poll(empty.path(), at("2026-11-24T14:00:00Z")), Verdict::default());
+  }
+
+  #[test]
+  fn affects_ping_withholds_while_failing_or_stalled() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write(d, DECLARATIONS, DECL);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:00Z")), Verdict::default());
+    let verdict = watch.poll(d, at("2026-11-23T14:03:00Z"));
+    assert_eq!(
+      verdict,
+      Verdict {
+        withheld: true,
+        alerts: vec![STALL_HB.into()],
+        ..Verdict::default()
+      }
+    );
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:10Z", false, None));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:03:20Z")), Verdict::default());
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:30Z", true, Some("db down")));
+    let verdict = watch.poll(d, at("2026-11-23T14:03:40Z"));
+    assert_eq!(
+      verdict,
+      Verdict {
+        withheld: true,
+        alerts: vec!["heartbeat: db down".into()],
+        ..Verdict::default()
+      }
+    );
+    // imap does not affect the ping: its stall leaves it alone.
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:11:50Z", false, None));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:12:00Z")), Verdict::default());
+  }
+
+  #[test]
+  fn failure_pings_alert_once_per_ping_whatever_the_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write(d, DECLARATIONS, DECL);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    // Review Focus 5. imap has no flags at all; a ping older than the declarations is not alerted.
+    write(d, "state/imap.json", &state("2026-11-23T13:59:00Z", true, Some("old run")));
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:01:00Z", true, Some("db down")));
+    let first = Verdict {
+      withheld: true,
+      alerts: vec!["heartbeat: db down".into()],
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:10Z")), first);
+    write(d, "state/imap.json", &state("2026-11-23T14:01:15Z", true, None));
+    let verdict = watch.poll(d, at("2026-11-23T14:01:20Z"));
+    assert_eq!(
+      verdict,
+      Verdict {
+        withheld: true,
+        alerts: vec!["imap: failure ping".into()],
+        ..Verdict::default()
+      }
+    );
+    let same = Verdict {
+      withheld: true,
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:30Z")), same, "same pings, no new alert");
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:01:40Z", true, Some("db down")));
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:01:50Z")),
+      Verdict {
+        alerts: first.alerts,
+        ..same
+      }
+    );
+  }
+
+  #[test]
+  fn fail_ping_and_shutdown_react_to_each_stall_episode() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // quiet stalls with no flags; imap (shutdown) and heartbeat (fail_ping) react.
+    let quiet = r#""checks": {"quiet": {"period_secs": 10, "grace_secs": 0, "stall_message": null,
+                "affects_ping": false, "fail_ping": false, "shutdown": false},"#;
+    let text = DECL
+      .replace(
+        "\"fail_ping\": false, \"shutdown\": false}",
+        "\"fail_ping\": false, \"shutdown\": true}",
+      )
+      .replace("\"checks\": {", quiet);
+    write(d, DECLARATIONS, &text);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:00:05Z")), Verdict::default());
+    let hb_stall = Verdict {
+      withheld: true,
+      alerts: vec![STALL_HB.into()],
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:03:00Z")), hb_stall, "quiet stalls silently");
+    let still = Verdict {
+      withheld: true,
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:03:10Z")), still, "still stalled: nothing new");
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:15Z", false, None));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:03:20Z")), Verdict::default());
+    let again = watch.poll(d, at("2026-11-23T14:06:15Z"));
+    assert_eq!(
+      again,
+      Verdict {
+        alerts: vec![STALL_HB.into()],
+        ..hb_stall
+      }
+    );
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:11:50Z", false, None));
+    let stop = Verdict {
+      stop: Some(STALL_IMAP.into()),
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:12:00Z")), stop);
+    assert_eq!(watch.poll(d, at("2026-11-23T14:12:10Z")), Verdict::default());
+    write(d, "state/imap.json", &state("2026-11-23T14:12:20Z", false, None));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:12:30Z")), Verdict::default());
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:24:10Z", false, None));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:24:20Z")), stop, "a new episode stops again");
+  }
+
+  #[test]
+  fn an_unreadable_state_file_fails_without_stalling() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write(d, DECLARATIONS, DECL);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    write(d, "state/heartbeat.json", "{");
+    let reason = read_report(d, "heartbeat").unwrap_err();
+    let line = format!("heartbeat: state unreadable ({reason})");
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:01:00Z")),
+      Verdict {
+        withheld: true,
+        log: vec![line],
+        ..Verdict::default()
+      }
+    );
+    // Well past period + grace, yet no stall alert and no repeated log line.
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:30:00Z")),
+      Verdict {
+        withheld: true,
+        ..Verdict::default()
+      }
+    );
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:30:05Z", false, None));
+    write(d, "state/imap.json", "{");
+    let reason = read_report(d, "imap").unwrap_err();
+    let line = format!("imap: state unreadable ({reason})");
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:30:10Z")),
+      Verdict {
+        log: vec![line],
+        ..Verdict::default()
+      }
+    );
   }
 }
