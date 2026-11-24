@@ -187,7 +187,7 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
   write(
     root,
     "pyproject.toml",
-    "[project.scripts]\nrun-app-demo = \"m:main\"\n[tool.docker]\nrequired_persisted_dirs = [\"persisted_data\"]\n",
+    "[project.scripts]\nrun-app-demo = \"m:main\"\n[tool.docker]\nrequired_persisted_dirs = [\"persisted_data\"]\nhealth_checks_timeout_secs = 300\n",
   );
   // The script writes its uid where the (root-created, root-owned) tempdir allows: into the
   // chowned persisted dir, which is exactly what the app is expected to be able to write.
@@ -217,6 +217,7 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
 
   std::fs::create_dir_all(root.join("persisted_data/logs")).unwrap();
   std::fs::write(root.join("persisted_data/logs/wireguard-heartbeat.txt"), "2020-01-01T00:00:00Z").unwrap();
+  write(root, "persisted_data/logs/health/state/old.json", "{}");
   let mounted = root.join("mountinfo-ok");
   std::fs::write(
     &mounted,
@@ -240,4 +241,18 @@ fn as_root_checks_mounts_prepares_dirs_drops_privileges_and_execs() {
   );
   let meta = std::fs::metadata(root.join("persisted_data")).unwrap();
   assert_eq!(std::os::unix::fs::MetadataExt::uid(&meta), 999);
+  assert!(
+    !root.join("persisted_data/logs/health/state").exists(),
+    "the health folder is reset at start"
+  );
+  let health = std::fs::metadata(root.join("persisted_data/logs/health")).unwrap();
+  assert_eq!(std::os::unix::fs::MetadataExt::uid(&health), 999);
+  assert_eq!(std::os::unix::fs::MetadataExt::gid(&health), 999);
+  let deadline: jiff::Timestamp = std::fs::read_to_string(root.join("persisted_data/logs/health/declare-by.txt"))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+  let ahead = deadline.as_second() - jiff::Timestamp::now().as_second();
+  assert!((290..=300).contains(&ahead), "the deadline is now + 300 s, got +{ahead}");
 }

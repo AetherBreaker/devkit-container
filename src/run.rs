@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use nix::unistd::{Gid, Uid, getuid, setgid, setgroups, setuid};
 
 use crate::bundle::{self, Effective};
+use crate::checks;
 use crate::fetch::{self, Fetcher, Hosts, Outcome};
 use crate::health::Reason;
 use crate::logfile::Log;
@@ -37,6 +38,7 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   let entries = pyproject::required_persisted_dirs(&doc)?;
   let daemons = pyproject::daemons(&doc)?;
   let wireguard = pyproject::wireguard(&doc)?;
+  let health_timeout_secs = pyproject::health_checks_timeout_secs(&doc)?;
   let supervise = wireguard || !daemons.commands.is_empty() || pyproject::supervise(&doc)?;
   let mountinfo = std::fs::read_to_string(&args.mountinfo).with_context(|| format!("reading {}", args.mountinfo.display()))?;
   let missing = mounts::unbacked(&mounts::parse_mountinfo(&mountinfo), &args.app_root, &entries);
@@ -84,8 +86,21 @@ pub fn run(args: &RunArgs) -> Result<u8> {
       eprintln!("devkit-container: ping Fail failed: {err}");
     }
   };
+  // A previous run's declarations and pings must not satisfy this run's checks; the app (or, with
+  // the key set, `prepare` below) recreates the folder.
+  let health_dir = checks::dir(&args.app_root);
+  if let Err(e) = std::fs::remove_dir_all(&health_dir)
+    && e.kind() != std::io::ErrorKind::NotFound
+  {
+    let e = anyhow!(e).context(format!("removing {}", health_dir.display()));
+    down(&tunnel, &e);
+    return Err(e);
+  }
   // `prepare`, with the implicit folders of 4.4 and 5.7.
   let mut to_prepare = entries.clone();
+  if health_timeout_secs.is_some() {
+    to_prepare.push(format!("persisted_data/logs/{}", checks::DIR));
+  }
   if supervise {
     to_prepare.push("persisted_data/logs".to_string());
   }
@@ -95,6 +110,14 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   if let Err(e) = prepare::prepare(&args.app_root, &to_prepare, &mut prepare::chown_nonroot) {
     down(&tunnel, &e);
     return Err(e);
+  }
+  if let Some(secs) = health_timeout_secs {
+    // Bounded by `MAX_SECS`, so the cast and the addition cannot overflow a timestamp.
+    let deadline = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(secs as i64);
+    if let Err(e) = heartbeat::write(&health_dir.join(checks::DEADLINE), deadline) {
+      down(&tunnel, &e);
+      return Err(e);
+    }
   }
   if supervise && let Err(e) = consent_dir() {
     down(&tunnel, &e);
@@ -134,6 +157,7 @@ pub fn run(args: &RunArgs) -> Result<u8> {
       log,
       tunnel: tunnel.map(|t| t.plan),
       daemons,
+      health_timeout_secs,
     });
   }
   // Drop privileges, then replace this process with the app. Order matters: once the uid is

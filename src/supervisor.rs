@@ -51,6 +51,9 @@ pub struct Plan {
   #[cfg(unix)]
   pub tunnel: Option<TunnelPlan>,
   pub daemons: crate::pyproject::Daemons,
+  /// `[tool.docker].health_checks_timeout_secs`: the app must declare its checks within this.
+  #[cfg(unix)]
+  pub health_timeout_secs: Option<u64>,
 }
 
 /// The tunnel as the boot left it (spec 5.2), handed to the loop.
@@ -456,6 +459,7 @@ pub mod unix {
       log,
       tunnel,
       daemons,
+      health_timeout_secs: _health_timeout_secs,
     } = plan;
     let root = getuid().is_root();
     // Only the tunnel and the daemons (root, so only root can signal them) need root later;
