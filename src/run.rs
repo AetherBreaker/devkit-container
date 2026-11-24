@@ -89,6 +89,29 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   // A previous run's declarations and pings must not satisfy this run's checks; the app (or, with
   // the key set, `prepare` below) recreates the folder.
   let health_dir = checks::dir(&args.app_root);
+  // The app (uid 999) can write `persisted_data` and `persisted_data/logs`, so a planted symlink
+  // there would send this root delete and the `declare-by.txt` write outside the volume. Not racy:
+  // the app isn't running yet. NotFound is fine: nothing to delete, and `prepare` creates it.
+  let mut link_check = args.app_root.clone();
+  for part in ["persisted_data", "logs", checks::DIR] {
+    link_check.push(part);
+    match std::fs::symlink_metadata(&link_check) {
+      Ok(m) if m.file_type().is_symlink() => {
+        let e = anyhow!(
+          "{} is a symlink; refusing to reset the health folder through it",
+          link_check.display()
+        );
+        down(&tunnel, &e);
+        return Err(e);
+      }
+      Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+        let e = anyhow!(e).context(format!("reading {}", link_check.display()));
+        down(&tunnel, &e);
+        return Err(e);
+      }
+      _ => {}
+    }
+  }
   if let Err(e) = std::fs::remove_dir_all(&health_dir)
     && e.kind() != std::io::ErrorKind::NotFound
   {
