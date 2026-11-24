@@ -277,10 +277,12 @@ impl Watch {
     }
     // Unreadable declarations count as not declared, so a broken file can't dodge the deadline;
     // the alert then says why they didn't count.
+    // Full-precision compare: truncated seconds would fire up to a second early. `s` is bounded by
+    // `MAX_SECS`, so the addition cannot overflow.
     let Some(declarations) = &self.declarations else {
       if let Some(secs) = self
         .timeout_secs
-        .filter(|&s| now.as_second() - self.started.as_second() >= s as i64)
+        .filter(|&s| now >= self.started + jiff::SignedDuration::from_secs(s as i64))
       {
         let message = match &self.declarations_error {
           Some(reason) => format!("health checks not declared within {secs} s ({reason})"),
@@ -610,9 +612,10 @@ mod tests {
       stop: Some(message),
       ..Verdict::default()
     };
-    let mut watch = Watch::new(Some(300), at("2026-11-23T14:00:00Z"));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:04:59Z")), Verdict::default());
-    assert_eq!(watch.poll(d, at("2026-11-23T14:05:00Z")), missed);
+    // Sub-second start: truncated seconds would fire at 14:05:00.000, 0.9 s early.
+    let mut watch = Watch::new(Some(300), at("2026-11-23T14:00:00.900Z"));
+    assert_eq!(watch.poll(d, at("2026-11-23T14:05:00Z")), Verdict::default());
+    assert_eq!(watch.poll(d, at("2026-11-23T14:05:00.900Z")), missed);
     // Unreadable declarations count as not declared, log their reason once and name it in the alert.
     write(d, DECLARATIONS, "{");
     let reason = read_declarations(d).unwrap_err();
