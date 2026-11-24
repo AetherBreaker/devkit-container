@@ -128,7 +128,7 @@ pub fn run(args: &RunArgs) -> Result<u8> {
     return Err(e);
   }
   // After the startup scripts, which have no timeout, so they can't eat the app's window; the
-  // supervisor's `Watch` starts seconds later, so the probe and the supervisor agree.
+  // supervisor's `Watch` starts moments later, so the probe and the supervisor agree.
   if let Some(secs) = health_timeout_secs {
     // Bounded by `MAX_SECS`, so the cast and the addition cannot overflow a timestamp.
     let deadline = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(secs as i64);
