@@ -32,10 +32,11 @@ No Python runs in the image outside the app itself.
   `persisted_data/logs/health/`, supervised or not, so a previous run's health-check declarations
   and pings never count for this one; `mkdir -p` + recursive chown to `999:999` of the required
   dirs plus, implicitly, `persisted_data/logs` when supervising, `persisted_data/logs/health` with
-  `health_checks_timeout_secs` set and `persisted_data/wireguard` with `wireguard` on; with
-  `health_checks_timeout_secs` set, writes `health/declare-by.txt` (now plus the timeout); runs
-  the startup scripts as root, in order, in `/app`, with the full environment, no arguments and
-  no timeout (the first nonzero exit ends the run with exit 1); removes `WG_PRIVATE_KEY`,
+  `health_checks_timeout_secs` set and `persisted_data/wireguard` with `wireguard` on; runs the
+  startup scripts as root, in order, in `/app`, with the full environment, no arguments and no
+  timeout (the first nonzero exit ends the run with exit 1); with `health_checks_timeout_secs`
+  set, writes `health/declare-by.txt`, the app's start plus the timeout, after the scripts so
+  they can't use up the app's window; removes `WG_PRIVATE_KEY`,
   `WG_PEER_PRESHARED_KEY`, `WG_HUB_TOKEN` and every `[tool.docker].scrub_env` name from the
   app's environment; `setgroups([])`, `setgid`, `setuid`; `exec /app/.venv/bin/<script>`.
   `/app` itself stays root-owned: the app writes only to its mounted dirs or temp dirs. Entries
@@ -120,8 +121,8 @@ No Python runs in the image outside the app itself.
   flight: one `/fail` with a line per reason (the stale files on their transition, then the
   alerts), replacing that poll's plain ping; without `affects_ping`, a check that keeps sending
   failure pings flips healthchecks.io down and back up on each. Two stops end the run: a
-  `shutdown` check stalling, and no valid `checks.json` within `health_checks_timeout_secs`
-  (alert `health checks not declared within N s`). Either logs `health: <reason>; stopping the
+  `shutdown` check stalling, and no valid `checks.json` within `health_checks_timeout_secs` of
+  the app's start (alert `health checks not declared within N s`). Either logs `health: <reason>; stopping the
   app`, sends its alerts as one `/fail` (a `shutdown` stall sends none of its own; add
   `fail_ping` for that), stops the app and the daemons with SIGTERM (30 s, then SIGKILL), brings
   `wg0` down and exits 1, without the exit-code `/fail`. Once a `SIGTERM` or `SIGINT` has been
@@ -160,7 +161,7 @@ No Python runs in the image outside the app itself.
 | `scrub_env` | variable names removed from the app's environment on top of the built-in secrets; default empty |
 | `daemons` | commands, each a list of the program (a path, or a name found on `PATH`) and its arguments, that `run` starts as root after the startup scripts and supervises beside the app; implies `supervise`; default empty |
 | `stop_daemons_after_app` | stop the app first and the daemons only once it has exited, Docker's stop included; refused without `daemons`; off by default |
-| `health_checks_timeout_secs` | seconds from the start within which the app must write its health-check declarations (`health/checks.json`); past it `healthcheck` fails and, when supervised, the supervisor alerts and stops the app, exit 1; 1 to 31536000; does not turn on `supervise`; absent by default, meaning no deadline |
+| `health_checks_timeout_secs` | seconds from the app's start (after the startup scripts) within which the app must write its health-check declarations (`health/checks.json`); past it `healthcheck` fails and, when supervised, the supervisor alerts and stops the app, exit 1; 1 to 31536000; does not turn on `supervise`; absent by default, meaning no deadline |
 
 `chown_paths` and `mkdirs` are legacy keys the entrypoint refuses.
 
@@ -224,8 +225,8 @@ mount, so another container mounting the same path read-only can check them.
     check stalls once no ping has landed for its period plus grace, counted from `written_at`
     until its first ping; it is failing while stalled or while its latest ping is a failure
     ping.
-  - `declare-by.txt`: written by `run` with `health_checks_timeout_secs` set: the start plus the
-    timeout, one timestamp.
+  - `declare-by.txt`: written by `run` with `health_checks_timeout_secs` set: the app's start
+    plus the timeout, one timestamp.
 
 ## Tests
 
