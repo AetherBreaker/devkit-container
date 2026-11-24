@@ -90,19 +90,19 @@ pub fn parse_declarations(text: &str) -> Result<Declarations, String> {
     if !chars.next().is_some_and(allowed) || !chars.all(|ch| allowed(ch) || ch == '_' || ch == '-') || name.len() > 64 {
       return Err(format!("invalid check name {name:?}"));
     }
-    let secs = |key: &str| -> Result<u64, String> {
+    let secs = |key: &str, min: u64| -> Result<u64, String> {
       let n = field(c, key, "whole number", Value::is_u64)?.as_u64().unwrap_or_default();
-      if (1..=MAX_SECS).contains(&n) {
+      if (min..=MAX_SECS).contains(&n) {
         Ok(n)
       } else {
-        Err(format!("{name}: {key} must be 1 to {MAX_SECS}"))
+        Err(format!("{name}: {key} must be {min} to {MAX_SECS}"))
       }
     };
     let flag = |key: &str| Ok::<_, String>(field(c, key, "boolean", Value::is_boolean)?.as_bool().unwrap_or_default());
     checks.push(Check {
       name: name.clone(),
-      period_secs: secs("period_secs")?,
-      grace_secs: secs("grace_secs")?,
+      period_secs: secs("period_secs", 1)?,
+      grace_secs: secs("grace_secs", 0)?,
       stall_message: optional_message(c, "stall_message")?,
       affects_ping: flag("affects_ping")?,
       fail_ping: flag("fail_ping")?,
@@ -231,6 +231,15 @@ mod tests {
     for bad in ["../x", "Imap", "", "a/b", &"a".repeat(65)] {
       let text = DECL.replace("\"imap\"", &format!("{bad:?}"));
       assert!(parse_declarations(&text).is_err(), "{bad:?} must be refused");
+    }
+    // The spec allows no grace, but not a zero period; both are capped at MAX_SECS.
+    assert!(parse_declarations(&DECL.replace("\"grace_secs\": 120", "\"grace_secs\": 0")).is_ok());
+    for (from, to) in [
+      ("\"period_secs\": 600", "\"period_secs\": 0"),
+      ("\"period_secs\": 600", "\"period_secs\": 31536001"),
+      ("\"grace_secs\": 120, \"stall", "\"grace_secs\": 31536001, \"stall"),
+    ] {
+      assert!(parse_declarations(&DECL.replace(from, to)).is_err(), "{to} must be refused");
     }
     // Review Focus 4.
     let empty = parse_declarations(r#"{"version": 1, "written_at": "2026-11-23T14:00:00Z", "checks": {}}"#).unwrap();
