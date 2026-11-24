@@ -2,7 +2,8 @@
 //! on, run three ways: supervise without a tunnel (an edited pyproject), wireguard against a
 //! hub container built from the same image, and the ping against a local HTTP listener.
 //! Needs docker, the network and a host kernel with the wireguard module
-//! (`sudo modprobe wireguard`); `#[ignore]`, CI runs it with `--ignored`.
+//! (`sudo modprobe wireguard`). A second image, without the mode, runs a health-check stop and
+//! needs docker alone. `#[ignore]`, CI runs them with `--ignored`.
 
 mod common;
 
@@ -435,4 +436,111 @@ fn the_supervisor_runs_the_app_with_and_without_a_tunnel_and_pings() {
     spoke_logs.contains("wireguard public key") && spoke_logs.contains("app exited with 7"),
     "{spoke_logs}"
   );
+}
+
+/// The `[tool.docker]` tail: a root daemon declares one check, `probe`, that is never pinged,
+/// with `fail_ping` and `shutdown`, stalling a second after `written_at`. It stays up, since a
+/// daemon exiting would end the run first.
+const NEVER_PINGED: &str = r#"daemons = [["sh", "-c", '''
+mkdir -p /app/persisted_data/logs/health && cd /app/persisted_data/logs/health
+printf '{"version": 1, "written_at": "%s", "checks": {"probe": {"period_secs": 1, "grace_secs": 0, "stall_message": "never pinged", "affects_ping": false, "fail_ping": true, "shutdown": true}}}' "$(date -u -Iseconds)" > checks.json.tmp
+mv checks.json.tmp checks.json
+exec sleep infinity''']]
+"#;
+
+/// The ping listener for bodies: one stderr line per request, `<method> <path> <repr(body)>`.
+const LISTENER: &str = r#"import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.reply("")
+    def do_POST(self):
+        self.reply(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
+    def reply(self, body):
+        print(self.command, self.path, repr(body), file=sys.stderr, flush=True)
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+"#;
+
+#[test]
+#[ignore = "needs docker and the network; run with --ignored"]
+fn a_shutdown_check_that_stalls_stops_the_app_with_one_fail() {
+  ok(&mut docker(&["version", "--format", "{{.Server.Os}}"]));
+  let root = root();
+  let work = tempfile::tempdir().unwrap();
+  // Distinct from the other test's names: both run at once, in one process, in the same second.
+  let id = format!("{}-{}", std::process::id(), std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
+  let mut guard = Cleanup {
+    image: format!("devkit-smoke-health:{id}"),
+    volume: format!("devkit-smoke-health-{id}"),
+    containers: vec![],
+    network: Some(format!("devkit-smoke-health-{id}")),
+  };
+  let image = guard.image.clone();
+  let net = guard.network.clone().unwrap();
+  build_image(work.path(), &root, SERVE_APP, NEVER_PINGED, false, &image);
+  ok(&mut docker(&["network", "create", &net]));
+  let hc = format!("health-hc-{id}");
+  guard.containers.push(hc.clone());
+  ok(&mut docker(&[
+    "run",
+    "-d",
+    "--name",
+    &hc,
+    "--network",
+    &net,
+    "--user",
+    "999:999",
+    "--entrypoint",
+    "/app/.venv/bin/python",
+    &image,
+    "-c",
+    LISTENER,
+  ]));
+  wait_for("the listener", Duration::from_secs(30), &[&hc], || {
+    let get = "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')";
+    exec(&hc, &["/app/.venv/bin/python", "-c", get]).status.success()
+  });
+  let app = format!("health-app-{id}");
+  guard.containers.push(app.clone());
+  ok(&mut docker(&[
+    "run",
+    "-d",
+    "--name",
+    &app,
+    "--network",
+    &net,
+    "-v",
+    &format!("{}:/app/persisted_data", guard.volume),
+    "-e",
+    "WG_POLL_SECS=1",
+    "-e",
+    &format!("ALERTS_HEALTHCHECK_PING_URL=http://{hc}:8080/ping/h"),
+    &image,
+  ]));
+  wait_for("the health stop", Duration::from_secs(60), &[&app, &hc], || {
+    text(&ok(&mut docker(&["inspect", "-f", "{{.State.Running}}", &app]))).trim() == "false"
+  });
+  let log = logs(&app);
+  eprintln!("--- app log\n{log}");
+  assert_eq!(text(&ok(&mut docker(&["wait", &app]))).trim(), "1", "{log}");
+  let stall = "probe: never pinged (no ping for ";
+  assert!(
+    log
+      .lines()
+      .any(|l| l.starts_with(&format!("devkit-container: health: {stall}")) && l.ends_with("; stopping the app")),
+    "{log}"
+  );
+  // Sent before the stop, synchronously, so it has landed by the time the container is gone.
+  let pings = logs(&hc);
+  eprintln!("--- listener log\n{pings}");
+  let fails: Vec<&str> = pings.lines().filter(|l| l.contains("/ping/h/fail")).collect();
+  assert_eq!(fails.len(), 1, "{pings}");
+  assert!(
+    fails[0].starts_with(&format!("POST /ping/h/fail '{stall}")) && fails[0].ends_with(" s)'"),
+    "the stall line alone: {pings}"
+  );
+  assert!(!pings.contains("exit code"), "no exit-code /fail: {pings}");
 }
