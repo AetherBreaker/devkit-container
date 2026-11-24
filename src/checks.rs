@@ -244,6 +244,9 @@ pub struct Watch {
   state_errors: BTreeMap<String, String>,
   /// Per check: stalled as of the last judgment; absent before the first, which counts as not stalled.
   stalled: BTreeMap<String, bool>,
+  /// Per check: the report `at` seen at the last judgment (`None` = no report). A ping between two
+  /// stalled polls ends an episode the `stalled` flag can't see when the period is under the poll interval.
+  seen_at: BTreeMap<String, Option<jiff::Timestamp>>,
   /// Per check: the `at` of the last failure ping alerted on.
   alerted: BTreeMap<String, jiff::Timestamp>,
   /// The last poll's `withheld`, so only its changes are logged.
@@ -260,6 +263,7 @@ impl Watch {
       declarations_error: None,
       state_errors: BTreeMap::new(),
       stalled: BTreeMap::new(),
+      seen_at: BTreeMap::new(),
       alerted: BTreeMap::new(),
       withheld: false,
     }
@@ -335,8 +339,10 @@ impl Watch {
       verdict.withheld |= check.affects_ping && judgment != Judgment::Healthy;
       // Every stall and its end is logged, so a flagless one still shows in the supervisor's log.
       let was_stalled = self.stalled.insert(name.clone(), stalled) == Some(true);
+      let report_at = report.as_ref().map(|r| r.at);
+      let pinged_since = self.seen_at.insert(name.clone(), report_at).is_some_and(|prev| prev != report_at);
       match judgment {
-        Judgment::Stalled(reason) if !was_stalled => {
+        Judgment::Stalled(reason) if !was_stalled || pinged_since => {
           verdict.log.push(reason.clone());
           if check.fail_ping {
             verdict.alerts.push(reason.clone());
@@ -883,6 +889,44 @@ mod tests {
       },
       "a new episode stops again"
     );
+  }
+
+  #[test]
+  fn a_ping_between_two_stalled_polls_starts_a_new_episode() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text = DECL.replace(
+      "\"affects_ping\": true, \"fail_ping\": true, \"shutdown\": false",
+      "\"affects_ping\": true, \"fail_ping\": true, \"shutdown\": true",
+    );
+    write(d, DECLARATIONS, &text);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:03:00Z")),
+      Verdict {
+        withheld: true,
+        alerts: vec![STALL_HB.into()],
+        stop: Some(STALL_HB.into()),
+        log: vec![STALL_HB.into(), WITHHOLD.into()],
+      }
+    );
+    // Pinged and stalled again before the next poll: the flag never saw the gap.
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:01:00Z", false, None));
+    let again = "heartbeat: no ping for 240 s (period 60 s + grace 120 s)";
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:05:00Z")),
+      Verdict {
+        withheld: true,
+        alerts: vec![again.into()],
+        stop: Some(again.into()),
+        log: vec![again.into()],
+      }
+    );
+    let still = Verdict {
+      withheld: true,
+      ..Verdict::default()
+    };
+    assert_eq!(watch.poll(d, at("2026-11-23T14:05:10Z")), still, "same report: not a new episode");
   }
 
   #[test]
