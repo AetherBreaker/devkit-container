@@ -11,6 +11,8 @@ use crate::ping::{Kind, Ping};
 
 /// When to ping (spec 7): `/start` once when every file is first fresh, plain on every fresh
 /// poll after, `/fail` once on the transition to stale, plain again on recovery.
+/// `withheld` (an `affects_ping` check is failing) silences plain and `/start`, but not a
+/// `/fail` for `core_fresh`.
 #[derive(Debug, Default)]
 pub struct Pinger {
   started: bool,
@@ -18,17 +20,20 @@ pub struct Pinger {
 }
 
 impl Pinger {
-  pub fn decide(&mut self, all_fresh: bool) -> Option<Kind> {
+  pub fn decide(&mut self, core_fresh: bool, withheld: bool) -> Option<Kind> {
     let was = self.last_fresh;
-    self.last_fresh = Some(all_fresh);
-    if all_fresh {
-      if !self.started {
-        self.started = true;
-        return Some(Kind::Start);
-      }
-      return Some(Kind::Plain);
+    self.last_fresh = Some(core_fresh);
+    if !core_fresh {
+      return (was == Some(true)).then_some(Kind::Fail);
     }
-    (was == Some(true)).then_some(Kind::Fail)
+    if withheld {
+      return None;
+    }
+    if !self.started {
+      self.started = true;
+      return Some(Kind::Start);
+    }
+    Some(Kind::Plain)
   }
 }
 
@@ -657,7 +662,7 @@ pub mod unix {
           if let Err(r) = heartbeat::check(&app_beat, heartbeat::DEFAULT_MAX_AGE_SECS, now) {
             reasons.push(r);
           }
-          match pinger.decide(reasons.is_empty()) {
+          match pinger.decide(reasons.is_empty(), false) {
             Some(Kind::Fail) => {
               log.line(&format!("unhealthy: {}", reasons.join("; ")));
               send(&mut inflight, Kind::Fail, &reasons.join("\n"));
@@ -745,13 +750,24 @@ mod tests {
   #[test]
   fn start_once_plain_while_fresh_fail_on_the_transition_then_plain_again() {
     let mut p = Pinger::default();
-    assert_eq!(p.decide(false), None, "silent until first fresh");
-    assert_eq!(p.decide(false), None);
-    assert_eq!(p.decide(true), Some(Kind::Start));
-    assert_eq!(p.decide(true), Some(Kind::Plain));
-    assert_eq!(p.decide(false), Some(Kind::Fail));
-    assert_eq!(p.decide(false), None, "one /fail per outage");
-    assert_eq!(p.decide(true), Some(Kind::Plain), "no second /start");
+    assert_eq!(p.decide(false, false), None, "silent until first fresh");
+    assert_eq!(p.decide(false, false), None);
+    assert_eq!(p.decide(true, false), Some(Kind::Start));
+    assert_eq!(p.decide(true, false), Some(Kind::Plain));
+    assert_eq!(p.decide(false, false), Some(Kind::Fail));
+    assert_eq!(p.decide(false, false), None, "one /fail per outage");
+    assert_eq!(p.decide(true, false), Some(Kind::Plain), "no second /start");
+  }
+
+  #[test]
+  fn withheld_skips_plain_and_start_but_never_masks_a_core_fail() {
+    let mut p = Pinger::default();
+    assert_eq!(p.decide(true, true), None, "no /start while withheld");
+    assert_eq!(p.decide(true, false), Some(Kind::Start));
+    assert_eq!(p.decide(true, true), None, "withheld: nothing, not /fail");
+    assert_eq!(p.decide(false, true), Some(Kind::Fail), "a core stale transition still fails");
+    assert_eq!(p.decide(false, false), None, "one /fail per outage");
+    assert_eq!(p.decide(true, false), Some(Kind::Plain));
   }
 
   #[cfg(unix)]
