@@ -7,6 +7,7 @@
 mod bundle;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod cache;
+mod checks;
 #[cfg(unix)]
 mod consent;
 #[cfg(unix)]
