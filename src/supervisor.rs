@@ -469,8 +469,7 @@ pub mod unix {
       daemons,
       health_timeout_secs,
     } = plan;
-    // The deadline counts from here, after the startup scripts: never earlier than the probe's
-    // `declare-by.txt`, which `run` wrote before them.
+    // `run` wrote `declare-by.txt` just before handing over, so both deadlines start with the app.
     let mut watch = checks::Watch::new(health_timeout_secs, jiff::Timestamp::now());
     let root = getuid().is_root();
     // Only the tunnel and the daemons (root, so only root can signal them) need root later;

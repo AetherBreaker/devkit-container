@@ -111,14 +111,6 @@ pub fn run(args: &RunArgs) -> Result<u8> {
     down(&tunnel, &e);
     return Err(e);
   }
-  if let Some(secs) = health_timeout_secs {
-    // Bounded by `MAX_SECS`, so the cast and the addition cannot overflow a timestamp.
-    let deadline = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(secs as i64);
-    if let Err(e) = heartbeat::write(&health_dir.join(checks::DEADLINE), deadline) {
-      down(&tunnel, &e);
-      return Err(e);
-    }
-  }
   if supervise && let Err(e) = consent_dir() {
     down(&tunnel, &e);
     return Err(e);
@@ -134,6 +126,16 @@ pub fn run(args: &RunArgs) -> Result<u8> {
   if let Err(e) = run_startup_scripts(&args.app_root, &startup) {
     down(&tunnel, &e);
     return Err(e);
+  }
+  // After the startup scripts, which have no timeout, so they can't eat the app's window; the
+  // supervisor's `Watch` starts seconds later, so the probe and the supervisor agree.
+  if let Some(secs) = health_timeout_secs {
+    // Bounded by `MAX_SECS`, so the cast and the addition cannot overflow a timestamp.
+    let deadline = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(secs as i64);
+    if let Err(e) = heartbeat::write(&health_dir.join(checks::DEADLINE), deadline) {
+      down(&tunnel, &e);
+      return Err(e);
+    }
   }
   let exe = args.app_root.join(".venv").join("bin").join(&script);
   if supervise {
