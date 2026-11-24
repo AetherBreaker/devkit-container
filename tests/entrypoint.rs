@@ -54,12 +54,15 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
     .output()
     .unwrap();
   assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-  // Two files, one stale: exit 1, one reason line, naming the stale one only.
+  // Two files, one stale: exit 1, one reason line, naming the stale one only. Every call names
+  // --app-root, so a host's own /app health folder can't add lines.
   let old = now.checked_sub(jiff::Span::new().seconds(400)).unwrap();
   std::fs::write(logs.join("wireguard-heartbeat.txt"), old.to_string()).unwrap();
   let out = bin()
     .env_remove("WG_TOLERATE_DISCONNECTED")
-    .args(["healthcheck", "--file"])
+    .args(["healthcheck", "--app-root"])
+    .arg(root)
+    .arg("--file")
     .arg(logs.join("heartbeat.txt"))
     .arg("--file")
     .arg(logs.join("wireguard-heartbeat.txt"))
@@ -72,7 +75,9 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
   // --max-age widens it.
   let out = bin()
     .env_remove("WG_TOLERATE_DISCONNECTED")
-    .args(["healthcheck", "--max-age", "1000", "--file"])
+    .args(["healthcheck", "--max-age", "1000", "--app-root"])
+    .arg(root)
+    .arg("--file")
     .arg(logs.join("wireguard-heartbeat.txt"))
     .output()
     .unwrap();
@@ -117,9 +122,13 @@ fn healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch() {
   let old = now.checked_sub(jiff::Span::new().seconds(400)).unwrap();
   std::fs::write(&app, now.to_string()).unwrap();
   std::fs::write(&tunnel, old.to_string()).unwrap();
+  // --app-root, so a host's own /app health folder can't add lines.
   let check = |tolerate: Option<&str>, files: &[&std::path::Path]| {
     let mut cmd = bin();
-    cmd.arg("healthcheck").env_remove("WG_TOLERATE_DISCONNECTED");
+    cmd
+      .args(["healthcheck", "--app-root"])
+      .arg(dir.path())
+      .env_remove("WG_TOLERATE_DISCONNECTED");
     if let Some(v) = tolerate {
       cmd.env("WG_TOLERATE_DISCONNECTED", v);
     }
