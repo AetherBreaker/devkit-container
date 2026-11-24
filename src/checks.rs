@@ -164,6 +164,34 @@ pub fn judge(check: &Check, report: Option<&Report>, written_at: jiff::Timestamp
   }
 }
 
+/// What the Docker probe prints: one line per problem, none when healthy. Without declarations the
+/// app is judged as before, unless it has missed the deadline the supervisor set at boot. An
+/// unreadable report fails whatever the clock says, as the supervisor's `Watch` treats it.
+pub fn probe(dir: &Path, now: jiff::Timestamp) -> Vec<String> {
+  let declarations = match read_declarations(dir) {
+    Ok(Some(d)) => d,
+    Ok(None) => {
+      return match read_with(&dir.join(DEADLINE), |t| heartbeat::parse(t.trim()).map_err(|e| e.to_string())) {
+        Ok(Some(by)) if now >= by => vec![format!("health checks not declared by {by}")],
+        Ok(_) => vec![],
+        Err(e) => vec![e],
+      };
+    }
+    Err(e) => return vec![e],
+  };
+  declarations
+    .checks
+    .iter()
+    .filter_map(|check| match read_report(dir, &check.name) {
+      Ok(report) => match judge(check, report.as_ref(), declarations.written_at, now) {
+        Judgment::Healthy => None,
+        Judgment::Failing(line) | Judgment::Stalled(line) => Some(line),
+      },
+      Err(reason) => Some(format!("{}: state unreadable ({reason})", check.name)),
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -274,5 +302,30 @@ mod tests {
       judge(imap, Some(&ok("2026-11-23T15:00:00Z")), w, at("2026-11-23T14:30:00Z")),
       Judgment::Healthy
     );
+  }
+
+  #[test]
+  fn the_probe_reports_one_line_per_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let now = at("2026-11-23T14:30:00Z");
+    assert!(probe(d, now).is_empty(), "no folder content: healthy, as today");
+    std::fs::write(d.join(DEADLINE), "2026-11-23T14:35:00Z").unwrap();
+    assert!(probe(d, now).is_empty(), "deadline not reached");
+    std::fs::write(d.join(DEADLINE), "2026-11-23T14:29:00Z").unwrap();
+    assert_eq!(probe(d, now), ["health checks not declared by 2026-11-23T14:29:00Z"]);
+    std::fs::write(d.join(DECLARATIONS), DECL).unwrap();
+    std::fs::create_dir(d.join(STATE_DIR)).unwrap();
+    std::fs::write(
+      d.join(STATE_DIR).join("heartbeat.json"),
+      r#"{"at": "2026-11-23T14:29:30Z", "failure": false, "message": null}"#,
+    )
+    .unwrap();
+    std::fs::write(d.join(STATE_DIR).join("imap.json"), "{").unwrap();
+    let lines = probe(d, now);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("imap: ") && lines[0].contains("unreadable"), "{lines:?}");
+    std::fs::write(d.join(DECLARATIONS), "{").unwrap();
+    assert!(probe(d, now)[0].contains("not JSON"));
   }
 }

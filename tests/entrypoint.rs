@@ -80,6 +80,34 @@ fn healthcheck_reads_files_only_and_says_why_it_fails() {
 }
 
 #[test]
+fn healthcheck_fails_with_the_apps_stall_message() {
+  let dir = tempfile::tempdir().unwrap();
+  let root = dir.path();
+  let logs = root.join("persisted_data").join("logs");
+  std::fs::create_dir_all(&logs).unwrap();
+  let now = jiff::Timestamp::now();
+  std::fs::write(logs.join("heartbeat.txt"), now.to_string()).unwrap();
+  let hour_ago = now.checked_sub(jiff::Span::new().seconds(3600)).unwrap();
+  write(
+    &logs,
+    "health/checks.json",
+    &format!(
+      r#"{{"version": 1, "written_at": "{hour_ago}", "checks": {{"imap": {{"period_secs": 1, "grace_secs": 1,
+      "stall_message": "IMAP server unresponsive", "affects_ping": false, "fail_ping": false, "shutdown": false}}}}}}"#
+    ),
+  );
+  let out = bin()
+    .env_remove("WG_TOLERATE_DISCONNECTED")
+    .args(["healthcheck", "--app-root"])
+    .arg(root)
+    .output()
+    .unwrap();
+  assert_eq!(out.status.code(), Some(1));
+  let err = String::from_utf8_lossy(&out.stderr);
+  assert!(err.contains("imap: IMAP server unresponsive (no ping for"), "{err}");
+}
+
+#[test]
 fn healthcheck_ignores_the_tunnel_file_under_the_tolerate_switch() {
   let dir = tempfile::tempdir().unwrap();
   let logs = dir.path().join("persisted_data").join("logs");
