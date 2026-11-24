@@ -536,6 +536,16 @@ pub mod unix {
       }));
       true
     };
+    // A terminal path's one /fail body: its own reason, then the alert lines still queued in `pending`
+    // (an empty reason leaves just those).
+    let with_pending = |reason: &str, pending: &[String]| -> String {
+      [reason]
+        .into_iter()
+        .filter(|r| !r.is_empty())
+        .chain(pending.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
+    };
     // The exit paths wait for the in-flight ping, then send theirs synchronously.
     let send_now = |inflight: &mut Option<JoinHandle<()>>, body: &str| {
       if let Some(h) = inflight.take() {
@@ -727,14 +737,14 @@ pub mod unix {
           Exit::Daemon(msg) => {
             stop_all(&mut live, Signal::SIGTERM);
             down();
-            send_now(&mut inflight, &msg);
+            send_now(&mut inflight, &with_pending(&msg, &pending));
             return Ok(1);
           }
           Exit::Broken(err) => {
             log.line(&format!("broken: {err:#}; stopping the app"));
             stop_all(&mut live, Signal::SIGTERM);
             down();
-            send_now(&mut inflight, &format!("{err:#}"));
+            send_now(&mut inflight, &with_pending(&format!("{err:#}"), &pending));
             return Err(err);
           }
           Exit::GiveUp {
@@ -749,13 +759,13 @@ pub mod unix {
             log.line(&format!("{msg}; SIGINT to the app"));
             stop_all(&mut live, Signal::SIGINT);
             down();
-            send_now(&mut inflight, &msg);
+            send_now(&mut inflight, &with_pending(&msg, &pending));
             return Ok(75);
           }
           Exit::Removed(tag) => {
             let msg = format!("removed from the hub's peer table in {tag}");
             log.line(&format!("{msg}; SIGINT to the app"));
-            send_now(&mut inflight, &msg);
+            send_now(&mut inflight, &with_pending(&msg, &pending));
             stop_all(&mut live, Signal::SIGINT);
             down();
             return Ok(75);
@@ -790,9 +800,16 @@ pub mod unix {
     if let Some(ts) = &tunnel {
       ts.plan.interface.down();
     }
-    if exit_code != 0 {
-      // Synchronous like the other exit paths: `send` would skip it behind an in-flight ping.
-      send_now(&mut inflight, &format!("exit code {exit_code}"));
+    // Synchronous like the other exit paths: `send` would skip it behind an in-flight ping. A clean
+    // exit sends only queued alerts.
+    let head = if exit_code != 0 {
+      format!("exit code {exit_code}")
+    } else {
+      String::new()
+    };
+    let body = with_pending(&head, &pending);
+    if !body.is_empty() {
+      send_now(&mut inflight, &body);
     }
     // The container ends with this process; give the last ping its chance to leave.
     if let Some(h) = inflight {
