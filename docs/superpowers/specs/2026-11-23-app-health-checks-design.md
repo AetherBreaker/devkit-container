@@ -112,7 +112,7 @@ same files.
 a failure ping has `"failure": true` and its message. `last_failure` is `{"at", "message"}` of the
 run's most recent failure ping of that check (the current ping when it is one), kept across
 success pings, so a failure a success overwrote before a poll still reaches the supervisor. A
-reader treats a missing `last_failure` as null.
+reader treats a missing `last_failure` as null, except on a failure ping, where it takes the ping itself.
 
 `declare-by.txt`: one ISO 8601 timestamp (the app's start + timeout, written just after the
 startup scripts), in the heartbeat format.
