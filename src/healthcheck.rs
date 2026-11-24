@@ -2,13 +2,15 @@
 //! per problem on stderr (what `docker inspect` shows). Reads files only: no root, no
 //! capabilities, no `wg`, no pyproject parse, no dependence on the supervisor (spec 7). Under
 //! `WG_TOLERATE_DISCONNECTED=1` the tunnel's file is skipped and the app's judged alone
-//! (timeclock design §11.2).
+//! (timeclock design §11.2). The app's declared health checks (`checks::probe` over the health
+//! folder) are judged after the files, each failing check adding its own line; an app that
+//! declares nothing is judged by its heartbeat file alone, as before.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::heartbeat;
+use crate::{checks, heartbeat};
 
-pub fn run(files: &[PathBuf], max_age: u64, tolerate: bool) -> u8 {
+pub fn run(files: &[PathBuf], max_age: u64, tolerate: bool, health_dir: &Path) -> u8 {
   let now = jiff::Timestamp::now();
   let mut failed = false;
   for file in files {
@@ -21,6 +23,10 @@ pub fn run(files: &[PathBuf], max_age: u64, tolerate: bool) -> u8 {
       eprintln!("{reason}");
       failed = true;
     }
+  }
+  for line in checks::probe(health_dir, now) {
+    eprintln!("{line}");
+    failed = true;
   }
   u8::from(failed)
 }
