@@ -187,6 +187,31 @@ pub fn daemons(doc: &DocumentMut) -> Result<Daemons> {
   Ok(Daemons { commands, after_app })
 }
 
+/// `[tool.docker].health_checks_timeout_secs`: the deadline for app-declared health checks.
+/// Absent means no deadline; setting it is the opt-in.
+#[cfg_attr(not(unix), allow(dead_code))] // only `run` (Unix) calls this
+pub fn health_checks_timeout_secs(doc: &DocumentMut) -> Result<Option<u64>> {
+  let Some(item) = doc
+    .get("tool")
+    .and_then(|t| t.get("docker"))
+    .and_then(|d| d.get("health_checks_timeout_secs"))
+  else {
+    return Ok(None);
+  };
+  let secs = item
+    .as_integer()
+    .and_then(|n| u64::try_from(n).ok())
+    .filter(|n| (1..=crate::wireguard::MAX_SECS).contains(n))
+    .with_context(|| {
+      format!(
+        "[tool.docker].health_checks_timeout_secs must be a whole number of seconds, 1 to {}, got {}",
+        crate::wireguard::MAX_SECS,
+        item.to_string().trim()
+      )
+    })?;
+  Ok(Some(secs))
+}
+
 #[cfg_attr(not(unix), allow(dead_code))]
 fn string_list(doc: &DocumentMut, key: &str) -> Result<Vec<String>> {
   let Some(item) = doc.get("tool").and_then(|t| t.get("docker")).and_then(|d| d.get(key)) else {
@@ -340,5 +365,27 @@ scrub_env = [\"WG_HUB_PRIVATE_KEY\", \"OTHER\"]
       .unwrap_err()
       .to_string();
     assert!(err.contains("must be true or false"), "{err}");
+  }
+
+  #[test]
+  fn the_health_checks_timeout_is_an_optional_bounded_whole_number() {
+    assert_eq!(health_checks_timeout_secs(&doc("[project]\n")).unwrap(), None);
+    assert_eq!(
+      health_checks_timeout_secs(&doc("[tool.docker]\nhealth_checks_timeout_secs = 300\n")).unwrap(),
+      Some(300)
+    );
+    assert_eq!(
+      health_checks_timeout_secs(&doc("[tool.docker]\nhealth_checks_timeout_secs = 31536000\n")).unwrap(),
+      Some(31_536_000)
+    );
+    for bad in ["0", "31536001", "-5", "1.5", "\"300\"", "true"] {
+      let e = health_checks_timeout_secs(&doc(&format!("[tool.docker]\nhealth_checks_timeout_secs = {bad}\n")))
+        .unwrap_err()
+        .to_string();
+      assert!(
+        e.contains("[tool.docker].health_checks_timeout_secs") && e.contains("1 to 31536000"),
+        "{bad}: {e}"
+      );
+    }
   }
 }
