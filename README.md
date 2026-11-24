@@ -230,7 +230,7 @@ mount, so another container mounting the same path read-only can check them.
   - `state/<name>.json`: that check's latest ping, `{"at": …, "failure": …, "message": …,
     "last_failure": …}`, rewritten on every ping (an empty `message` means none);
     `last_failure` is `{"at": …, "message": …}`, the run's most recent failure ping of that
-    check, kept across success pings, or null (also when missing). One older than `written_at`
+    check, kept across success pings, or null (also when missing, except on a failure ping, where the ping itself stands in). One older than `written_at`
     is a previous run's and ignored. A check stalls once no ping has landed for its period plus
     grace, counted from `written_at` until its first ping; it is failing while stalled or while
     its latest ping is a failure ping.

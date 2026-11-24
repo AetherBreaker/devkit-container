@@ -128,17 +128,24 @@ pub fn parse_declarations(text: &str) -> Result<Declarations, String> {
 
 pub fn parse_report(text: &str) -> Result<Report, String> {
   let root: Value = serde_json::from_str(text).map_err(|_| "not JSON".to_string())?;
+  let at = timestamp(&root, "at")?;
+  let failure = field(&root, "failure", "boolean", Value::is_boolean)?.as_bool().unwrap_or_default();
+  let message = optional_message(&root, "message")?;
   let last_failure = match root.get("last_failure") {
-    None | Some(Value::Null) => None,
+    // A failure ping is its own `last_failure` when the writer left it out, so `Watch` still alerts.
+    None | Some(Value::Null) => failure.then(|| Failure {
+      at,
+      message: message.clone(),
+    }),
     Some(f) => Some(Failure {
       at: timestamp(f, "at").map_err(|e| format!("last_failure.{e}"))?,
       message: optional_message(f, "message").map_err(|e| format!("last_failure.{e}"))?,
     }),
   };
   Ok(Report {
-    at: timestamp(&root, "at")?,
-    failure: field(&root, "failure", "boolean", Value::is_boolean)?.as_bool().unwrap_or_default(),
-    message: optional_message(&root, "message")?,
+    at,
+    failure,
+    message,
     last_failure,
   })
 }
@@ -418,7 +425,16 @@ mod tests {
       (r.at, r.failure, r.message.as_deref()),
       (at("2026-11-23T14:05:00Z"), true, Some("mailbox unreadable"))
     );
-    assert_eq!(r.last_failure, None, "a missing last_failure is null");
+    assert_eq!(
+      r.last_failure,
+      Some(Failure {
+        at: r.at,
+        message: r.message.clone()
+      }),
+      "a failure ping without last_failure is its own"
+    );
+    let ok = parse_report(r#"{"at": "2026-11-23T14:05:00Z", "failure": false, "message": null}"#).unwrap();
+    assert_eq!(ok.last_failure, None, "a missing last_failure on a success is null");
     let kept = parse_report(
       r#"{"at": "2026-11-23T14:06:00Z", "failure": false, "message": null,
           "last_failure": {"at": "2026-11-23T14:05:00Z", "message": "mailbox unreadable"}}"#,
@@ -736,6 +752,21 @@ mod tests {
         ..same
       }
     );
+  }
+
+  #[test]
+  fn a_failure_ping_without_last_failure_alerts_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write(d, DECLARATIONS, DECL);
+    let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
+    write(
+      d,
+      "state/imap.json",
+      r#"{"at": "2026-11-23T14:01:10Z", "failure": true, "message": "x"}"#,
+    );
+    assert_eq!(watch.poll(d, at("2026-11-23T14:01:20Z")).alerts, ["imap: x"]);
+    assert!(watch.poll(d, at("2026-11-23T14:01:30Z")).alerts.is_empty(), "alerted once");
   }
 
   #[test]
