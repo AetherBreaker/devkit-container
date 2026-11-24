@@ -11,7 +11,7 @@ use crate::ping::{Kind, Ping};
 
 /// When to ping (spec 7): `/start` once when every file is first fresh, plain on every fresh
 /// poll after, `/fail` once on the transition to stale, plain again on recovery.
-/// `withheld` (an `affects_ping` check is failing) silences plain and `/start`, but not a
+/// `withheld` (an `affects_ping` check is failing, or an alert replaces the ping) silences plain and `/start`, but not a
 /// `/fail` for `core_fresh`.
 #[derive(Debug, Default)]
 pub struct Pinger {
@@ -685,7 +685,9 @@ pub mod unix {
           for line in &verdict.log {
             log.line(line);
           }
-          let kind = pinger.decide(reasons.is_empty(), verdict.withheld);
+          // Alerts replace the poll's regular ping, so they withhold it: `/start` waits for the first
+          // poll that sends it, while `/fail` still tracks the core alone.
+          let kind = pinger.decide(reasons.is_empty(), verdict.withheld || !verdict.alerts.is_empty());
           // One request per poll, since `send` skips while one is in flight: a core /fail and the
           // alerts share one body, which replaces the plain ping, or goes out from a stop's arm.
           let mut body = if kind == Some(Kind::Fail) { reasons } else { Vec::new() };
@@ -808,7 +810,8 @@ mod tests {
   #[test]
   fn withheld_skips_plain_and_start_but_never_masks_a_core_fail() {
     let mut p = Pinger::default();
-    assert_eq!(p.decide(true, true), None, "no /start while withheld");
+    // The loop also passes `withheld` for a poll whose ping an alert replaces.
+    assert_eq!(p.decide(true, true), None, "no /start while withheld or replaced by an alert");
     assert_eq!(p.decide(true, false), Some(Kind::Start));
     assert_eq!(p.decide(true, true), None, "withheld: nothing, not /fail");
     assert_eq!(p.decide(false, true), Some(Kind::Fail), "a core stale transition still fails");
