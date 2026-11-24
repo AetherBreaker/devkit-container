@@ -239,6 +239,8 @@ pub struct Watch {
   stalled: BTreeMap<String, bool>,
   /// Per check: the `at` of the last failure ping alerted on.
   alerted: BTreeMap<String, jiff::Timestamp>,
+  /// The last poll's `withheld`, so only its changes are logged.
+  withheld: bool,
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -252,6 +254,7 @@ impl Watch {
       state_errors: BTreeMap::new(),
       stalled: BTreeMap::new(),
       alerted: BTreeMap::new(),
+      withheld: false,
     }
   }
 
@@ -317,16 +320,32 @@ impl Watch {
       let judgment = judge(check, report.as_ref(), declarations.written_at, now);
       let stalled = matches!(judgment, Judgment::Stalled(_));
       verdict.withheld |= check.affects_ping && judgment != Judgment::Healthy;
-      if self.stalled.insert(name.clone(), stalled) != Some(true)
-        && let Judgment::Stalled(reason) = judgment
-      {
-        if check.fail_ping {
-          verdict.alerts.push(reason.clone());
+      // Every stall and its end is logged, so a flagless one still shows in the supervisor's log.
+      let was_stalled = self.stalled.insert(name.clone(), stalled) == Some(true);
+      match judgment {
+        Judgment::Stalled(reason) if !was_stalled => {
+          verdict.log.push(reason.clone());
+          if check.fail_ping {
+            verdict.alerts.push(reason.clone());
+          }
+          if check.shutdown {
+            verdict.stop.get_or_insert(reason);
+          }
         }
-        if check.shutdown {
-          verdict.stop.get_or_insert(reason);
-        }
+        Judgment::Healthy if was_stalled => verdict.log.push(format!("{name}: recovered")),
+        // Pinged again, but a failure ping, which alerts on its own.
+        Judgment::Failing(_) if was_stalled => verdict.log.push(format!("{name}: no longer stalled")),
+        _ => {}
       }
+    }
+    if verdict.withheld != self.withheld {
+      self.withheld = verdict.withheld;
+      let line = if verdict.withheld {
+        "health: withholding the ping"
+      } else {
+        "health: ping no longer withheld"
+      };
+      verdict.log.push(line.into());
     }
     verdict
   }
@@ -521,6 +540,8 @@ mod tests {
   }
   const STALL_IMAP: &str = "imap: IMAP server unresponsive (no ping for 720 s)";
   const STALL_HB: &str = "heartbeat: no ping for 180 s (period 60 s + grace 120 s)";
+  const WITHHOLD: &str = "health: withholding the ping";
+  const RELEASE: &str = "health: ping no longer withheld";
 
   #[test]
   fn declarations_are_cached_once_valid() {
@@ -597,30 +618,43 @@ mod tests {
     write(d, DECLARATIONS, DECL);
     let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
     assert_eq!(watch.poll(d, at("2026-11-23T14:01:00Z")), Verdict::default());
-    let verdict = watch.poll(d, at("2026-11-23T14:03:00Z"));
     assert_eq!(
-      verdict,
+      watch.poll(d, at("2026-11-23T14:03:00Z")),
       Verdict {
         withheld: true,
         alerts: vec![STALL_HB.into()],
-        ..Verdict::default()
+        stop: None,
+        log: vec![STALL_HB.into(), WITHHOLD.into()],
       }
     );
-    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:10Z", false, None));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:03:20Z")), Verdict::default());
-    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:30Z", true, Some("db down")));
-    let verdict = watch.poll(d, at("2026-11-23T14:03:40Z"));
+    // Out of the stall into a failure ping: still withheld, so no withheld line.
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:10Z", true, Some("db down")));
     assert_eq!(
-      verdict,
+      watch.poll(d, at("2026-11-23T14:03:20Z")),
       Verdict {
         withheld: true,
         alerts: vec!["heartbeat: db down".into()],
+        stop: None,
+        log: vec!["heartbeat: no longer stalled".into()],
+      }
+    );
+    write(d, "state/heartbeat.json", &state("2026-11-23T14:03:30Z", false, None));
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:03:40Z")),
+      Verdict {
+        log: vec![RELEASE.into()],
         ..Verdict::default()
       }
     );
-    // imap does not affect the ping: its stall leaves it alone.
+    // imap does not affect the ping: its stall is only logged.
     write(d, "state/heartbeat.json", &state("2026-11-23T14:11:50Z", false, None));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:12:00Z")), Verdict::default());
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:12:00Z")),
+      Verdict {
+        log: vec![STALL_IMAP.into()],
+        ..Verdict::default()
+      }
+    );
   }
 
   #[test]
@@ -635,7 +669,8 @@ mod tests {
     let first = Verdict {
       withheld: true,
       alerts: vec!["heartbeat: db down".into()],
-      ..Verdict::default()
+      stop: None,
+      log: vec![WITHHOLD.into()],
     };
     assert_eq!(watch.poll(d, at("2026-11-23T14:01:10Z")), first);
     write(d, "state/imap.json", &state("2026-11-23T14:01:15Z", true, None));
@@ -713,38 +748,70 @@ mod tests {
     write(d, DECLARATIONS, &text);
     let mut watch = Watch::new(None, at("2026-11-23T14:00:00Z"));
     assert_eq!(watch.poll(d, at("2026-11-23T14:00:05Z")), Verdict::default());
-    let hb_stall = Verdict {
-      withheld: true,
-      alerts: vec![STALL_HB.into()],
-      ..Verdict::default()
-    };
-    assert_eq!(watch.poll(d, at("2026-11-23T14:03:00Z")), hb_stall, "quiet stalls silently");
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:03:00Z")),
+      Verdict {
+        withheld: true,
+        alerts: vec![STALL_HB.into()],
+        stop: None,
+        log: vec![
+          STALL_HB.into(),
+          "quiet: no ping for 180 s (period 10 s + grace 0 s)".into(),
+          WITHHOLD.into()
+        ],
+      },
+      "quiet's stall is only logged"
+    );
     let still = Verdict {
       withheld: true,
       ..Verdict::default()
     };
     assert_eq!(watch.poll(d, at("2026-11-23T14:03:10Z")), still, "still stalled: nothing new");
     write(d, "state/heartbeat.json", &state("2026-11-23T14:03:15Z", false, None));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:03:20Z")), Verdict::default());
-    let again = watch.poll(d, at("2026-11-23T14:06:15Z"));
     assert_eq!(
-      again,
+      watch.poll(d, at("2026-11-23T14:03:20Z")),
       Verdict {
+        log: vec!["heartbeat: recovered".into(), RELEASE.into()],
+        ..Verdict::default()
+      }
+    );
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:06:15Z")),
+      Verdict {
+        withheld: true,
         alerts: vec![STALL_HB.into()],
-        ..hb_stall
+        stop: None,
+        log: vec![STALL_HB.into(), WITHHOLD.into()],
       }
     );
     write(d, "state/heartbeat.json", &state("2026-11-23T14:11:50Z", false, None));
-    let stop = Verdict {
-      stop: Some(STALL_IMAP.into()),
-      ..Verdict::default()
-    };
-    assert_eq!(watch.poll(d, at("2026-11-23T14:12:00Z")), stop);
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:12:00Z")),
+      Verdict {
+        stop: Some(STALL_IMAP.into()),
+        log: vec!["heartbeat: recovered".into(), STALL_IMAP.into(), RELEASE.into()],
+        ..Verdict::default()
+      }
+    );
     assert_eq!(watch.poll(d, at("2026-11-23T14:12:10Z")), Verdict::default());
     write(d, "state/imap.json", &state("2026-11-23T14:12:20Z", false, None));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:12:30Z")), Verdict::default());
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:12:30Z")),
+      Verdict {
+        log: vec!["imap: recovered".into()],
+        ..Verdict::default()
+      }
+    );
     write(d, "state/heartbeat.json", &state("2026-11-23T14:24:10Z", false, None));
-    assert_eq!(watch.poll(d, at("2026-11-23T14:24:20Z")), stop, "a new episode stops again");
+    assert_eq!(
+      watch.poll(d, at("2026-11-23T14:24:20Z")),
+      Verdict {
+        stop: Some(STALL_IMAP.into()),
+        log: vec![STALL_IMAP.into()],
+        ..Verdict::default()
+      },
+      "a new episode stops again"
+    );
   }
 
   #[test]
@@ -760,15 +827,17 @@ mod tests {
       watch.poll(d, at("2026-11-23T14:01:00Z")),
       Verdict {
         withheld: true,
-        log: vec![line],
+        log: vec![line, WITHHOLD.into()],
         ..Verdict::default()
       }
     );
-    // Well past period + grace, yet no stall alert and no repeated log line.
+    // heartbeat is well past period + grace, yet no stall and no repeated line; only imap's
+    // own stall is logged.
     assert_eq!(
       watch.poll(d, at("2026-11-23T14:30:00Z")),
       Verdict {
         withheld: true,
+        log: vec!["imap: IMAP server unresponsive (no ping for 1800 s)".into()],
         ..Verdict::default()
       }
     );
@@ -779,7 +848,7 @@ mod tests {
     assert_eq!(
       watch.poll(d, at("2026-11-23T14:30:10Z")),
       Verdict {
-        log: vec![line],
+        log: vec![line, RELEASE.into()],
         ..Verdict::default()
       }
     );
